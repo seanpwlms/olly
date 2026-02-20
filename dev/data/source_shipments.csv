@@ -1,0 +1,6 @@
+id,order_id,status,shipped_at
+1,1,delivered,2026-01-15 10:00:00
+2,2,delivered,2026-01-15 11:00:00
+3,3,in_transit,2026-01-15 12:00:00
+4,4,delivered,2026-01-15 13:00:00
+5,5,in_transit,2026-01-15 14:00:00

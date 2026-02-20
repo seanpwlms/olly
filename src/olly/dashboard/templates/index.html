@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="stats-row">
+    <div class="stat-card stat-error">
+        <div class="stat-value">{{ stats.error_count }}</div>
+        <div class="stat-label">Errors</div>
+    </div>
+    <div class="stat-card stat-warning">
+        <div class="stat-value">{{ stats.warning_count }}</div>
+        <div class="stat-label">Warnings</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ stats.tables_monitored }}</div>
+        <div class="stat-label">Tables Monitored</div>
+    </div>
+    {% if dbt_stats.error_count or dbt_stats.warning_count %}
+    <a href="/dbt" class="stat-card stat-card-link {% if dbt_stats.error_count %}stat-error{% else %}stat-warning{% endif %}">
+        <div class="stat-value">{{ dbt_stats.error_count + dbt_stats.warning_count }}</div>
+        <div class="stat-label">dbt Issues</div>
+    </a>
+    {% endif %}
+</div>
+
+{% if check_breakdown %}
+<section>
+    <h2>By Check Type</h2>
+    <div class="stats-row">
+        {% for ct, errors, warnings in check_breakdown %}
+        <div class="stat-card">
+            <div class="stat-label">{{ ct }}</div>
+            <div class="check-counts">
+                {% if errors %}<span class="check-count check-count-error">{{ errors }} error{{ "s" if errors != 1 else "" }}</span>{% endif %}
+                {% if warnings %}<span class="check-count check-count-warning">{{ warnings }} warning{{ "s" if warnings != 1 else "" }}</span>{% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
+<section>
+    <div class="table-header">
+        <h2>Findings</h2>
+        <div class="filters">
+            <input type="search" name="q" placeholder="Search findings…" class="filter-select filter-search"
+                hx-get="/api/findings" hx-target="#findings-body" hx-include=".filter-select,.filter-search"
+                hx-trigger="input changed delay:300ms, search">
+            <select hx-get="/api/findings" hx-target="#findings-body" hx-include=".filter-select,.filter-search" name="check_type" class="filter-select">
+                <option value="">All checks</option>
+                {% for ct in check_types %}<option value="{{ ct }}">{{ ct }}</option>{% endfor %}
+            </select>
+            <select hx-get="/api/findings" hx-target="#findings-body" hx-include=".filter-select,.filter-search" name="severity" class="filter-select">
+                <option value="">All severities</option>
+                {% for s in severities %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+            </select>
+            <select hx-get="/api/findings" hx-target="#findings-body" hx-include=".filter-select,.filter-search" name="schema" class="filter-select">
+                <option value="">All schemas</option>
+                {% for s in schemas %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+            </select>
+            <button hx-post="/refresh" hx-target="#findings-body" class="btn-refresh">Refresh</button>
+        </div>
+    </div>
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>Check</th>
+                <th>Severity</th>
+                <th>Table</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody id="findings-body">
+            {% include "partials/findings_rows.html" %}
+        </tbody>
+    </table>
+</section>
+<p class="last-check">Last check: {{ stats.last_check_time[:16].replace("T", " ") if stats.last_check_time else "—" }}</p>
+
+{% if dbt_findings %}
+<section>
+    <div class="table-header">
+        <h2>dbt Results</h2>
+        <a href="/dbt" class="btn-view-all">View all</a>
+    </div>
+    <div class="stats-row">
+        {% if dbt_stats.error_count %}
+        <div class="stat-card stat-error">
+            <div class="stat-value">{{ dbt_stats.error_count }}</div>
+            <div class="stat-label">Errors</div>
+        </div>
+        {% endif %}
+        {% if dbt_stats.warning_count %}
+        <div class="stat-card stat-warning">
+            <div class="stat-value">{{ dbt_stats.warning_count }}</div>
+            <div class="stat-label">Warnings</div>
+        </div>
+        {% endif %}
+    </div>
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>Severity</th>
+                <th>Type</th>
+                <th>Node</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in dbt_findings[:5] %}
+            <tr>
+                <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+                <td>{{ f.resource_type }}</td>
+                <td>{{ f.unique_id.split('.', 1)[1] if '.' in f.unique_id else f.unique_id }}</td>
+                <td>{{ f.description }}</td>
+            </tr>
+            {% endfor %}
+            {% if dbt_findings|length > 5 %}
+            <tr><td colspan="4" class="empty-state"><a href="/dbt">{{ dbt_findings|length - 5 }} more…</a></td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,39 @@
+[project]
+name = "olly"
+version = "0.1.0"
+description = "Data quality framework for monitoring data warehouses"
+readme = "README.md"
+authors = [
+    { name = "seanpwlms", email = "66645429+seanpwlms@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "ibis-framework",
+    "cyclopts",
+    "tomli-w",
+    "rich",
+    "prefab-ui>=0.2.0",
+]
+
+[project.optional-dependencies]
+duckdb = ["ibis-framework[duckdb]"]
+postgres = ["ibis-framework[postgres]"]
+bigquery = ["ibis-framework[bigquery]"]
+dashboard = ["fastapi>=0.115.0", "uvicorn[standard]>=0.32.0", "jinja2>=3.1.0"]
+
+[project.scripts]
+olly = "olly:main"
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff>=0.15.1",
+    "ty>=0.0.17",
+    "httpx",
+    "loq>=0.1.0a7",
+]
+
+[build-system]
+requires = ["uv_build>=0.9.22,<0.10.0"]
+build-backend = "uv_build"

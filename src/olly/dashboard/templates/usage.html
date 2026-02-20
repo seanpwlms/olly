@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Usage — Olly Dashboard{% endblock %}
+{% block content %}
+<h1>Usage &amp; Cost</h1>
+
+<div class="stats-row">
+    <div class="stat-card stat-error">
+        <div class="stat-value">{{ stats.unused_count }}</div>
+        <div class="stat-label">Unused Tables</div>
+    </div>
+    <div class="stat-card stat-warning">
+        <div class="stat-value">{{ stats.stale_count }}</div>
+        <div class="stat-label">Stale Tables</div>
+    </div>
+    {% if stats.total_cost_usd is not none %}
+    <div class="stat-card">
+        <div class="stat-value">${{ "%.2f"|format(stats.total_cost_usd) }}</div>
+        <div class="stat-label">Total Cost (USD)</div>
+    </div>
+    {% endif %}
+</div>
+
+<section>
+    <h2>Unused &amp; Stale Tables</h2>
+    {% if usage_findings %}
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>Table</th>
+                <th>Status</th>
+                <th>Last Queried</th>
+                <th>Days Inactive</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for f in usage_findings %}
+            <tr>
+                <td><a href="/table/{{ f.schema_name }}/{{ f.table_name }}">{{ f.schema_name }}.{{ f.table_name }}</a></td>
+                <td>
+                    {% if f.details.get("last_queried_at") is none %}
+                        <span class="badge badge-unused">unused</span>
+                    {% else %}
+                        <span class="badge badge-stale">stale</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if f.details.get("last_queried_at") %}
+                        {{ f.details["last_queried_at"][:10] }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+                <td>
+                    {% if f.details.get("days_unused") is not none %}
+                        {{ f.details["days_unused"]|int }}
+                    {% else %}
+                        —
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p class="empty-state">No unused or stale tables detected.</p>
+    {% endif %}
+</section>
+
+{% if cost_summary %}
+<section>
+    <h2>Cost Breakdown</h2>
+
+    {% if chart_spec %}
+    <div class="chart-section">
+        <h2>Top Tables by Cost</h2>
+        <div id="cost-chart"></div>
+    </div>
+    {% endif %}
+
+    {% if cost_summary.top_tables %}
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>Table</th>
+                <th>Cost (USD)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in cost_summary.top_tables %}
+            <tr>
+                <td><a href="/table/{{ t.schema }}/{{ t.table }}">{{ t.schema }}.{{ t.table }}</a></td>
+                <td>${{ "%.2f"|format(t.cost_usd) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    {% if cost_summary.top_users %}
+    <h2>Top Users by Cost</h2>
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Cost (USD)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for u in cost_summary.top_users %}
+            <tr>
+                <td>{{ u.user }}</td>
+                <td>${{ "%.2f"|format(u.cost_usd) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</section>
+
+{% if chart_spec %}
+<script>
+    vegaEmbed('#cost-chart', {{ chart_spec|safe }}, {actions: false});
+</script>
+{% endif %}
+{% endif %}
+
+{% endblock %}

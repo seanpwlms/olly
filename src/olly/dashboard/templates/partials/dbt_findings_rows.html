@@ -1,0 +1,28 @@
+{% if dbt_findings %}
+{% for f in dbt_findings %}
+<tr>
+    <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
+    <td>{{ f.resource_type }}</td>
+    <td>{{ f.unique_id.split('.', 1)[1] if '.' in f.unique_id else f.unique_id }}</td>
+    <td>{{ f.status }}</td>
+    <td>{{ "%.1f"|format(f.execution_time) }}s</td>
+    <td>
+        {{ f.description }}
+        {% if f.details.get("compiled_code") %}
+        <button class="btn-compiled" onclick="document.getElementById('modal-{{ loop.index }}').showModal()">View SQL</button>
+        <dialog id="modal-{{ loop.index }}" class="compiled-modal" onclick="if(event.target===this)this.close()">
+            <div class="compiled-modal-content">
+                <div class="compiled-modal-header">
+                    <span>{{ f.unique_id.split('.', 1)[1] if '.' in f.unique_id else f.unique_id }}</span>
+                    <button class="btn-close" onclick="this.closest('dialog').close()">&times;</button>
+                </div>
+                <pre><code>{{ f.details.compiled_code }}</code></pre>
+            </div>
+        </dialog>
+        {% endif %}
+    </td>
+</tr>
+{% endfor %}
+{% else %}
+<tr><td colspan="6" class="empty-state">No dbt findings</td></tr>
+{% endif %}

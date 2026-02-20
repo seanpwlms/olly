@@ -1,0 +1,7 @@
+*.duckdb
+*.duckdb.wal
+.olly/
+olly.toml
+target/
+__pycache__/
+.ruff_cache/

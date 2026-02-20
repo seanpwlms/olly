@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}dbt — Olly Dashboard{% endblock %}
+{% block content %}
+<h1>dbt Run Results</h1>
+
+<div class="stats-row">
+    <div class="stat-card stat-error">
+        <div class="stat-value">{{ dbt_stats.error_count }}</div>
+        <div class="stat-label">Errors</div>
+    </div>
+    <div class="stat-card stat-warning">
+        <div class="stat-value">{{ dbt_stats.warning_count }}</div>
+        <div class="stat-label">Warnings</div>
+    </div>
+</div>
+
+<section>
+    <div class="table-header">
+        <h2>Findings</h2>
+        <div class="filters">
+            <select hx-get="/api/dbt-findings" hx-target="#dbt-findings-body" hx-include=".filter-select" name="resource_type" class="filter-select">
+                <option value="">All types</option>
+                {% for rt in resource_types %}<option value="{{ rt }}">{{ rt }}</option>{% endfor %}
+            </select>
+            <select hx-get="/api/dbt-findings" hx-target="#dbt-findings-body" hx-include=".filter-select" name="severity" class="filter-select">
+                <option value="">All severities</option>
+                {% for s in severities %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+            </select>
+        </div>
+    </div>
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>Severity</th>
+                <th>Type</th>
+                <th>Node</th>
+                <th>Status</th>
+                <th>Time</th>
+                <th>Description</th>
+            </tr>
+        </thead>
+        <tbody id="dbt-findings-body">
+            {% include "partials/dbt_findings_rows.html" %}
+        </tbody>
+    </table>
+</section>
+{% endblock %}
