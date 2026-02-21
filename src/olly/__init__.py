@@ -112,6 +112,21 @@ def serve_prefab(*, host: str = "127.0.0.1", port: int = 8000) -> None:
     run_serve_prefab(host=host, port=port)
 
 
+@app.command
+def debug(*, connection: str | None = None) -> None:
+    """Test connectivity to the configured warehouse.
+
+    Connects to the warehouse and lists available schemas to verify
+    that credentials and network access are working.
+
+    Args:
+        connection: Name of a specific connection to test.
+    """
+    from olly.cli.debug import run_debug
+
+    run_debug(connection_name=connection)
+
+
 def main() -> None:
     """Entry point for the ``olly`` CLI."""
     app()

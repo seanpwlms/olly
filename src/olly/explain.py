@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from olly.adapter import Adapter
@@ -13,6 +14,7 @@ from olly.config_ops import (
     validate_config,
 )
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SchemaMatch:
@@ -64,7 +66,8 @@ def explain_config(
 
     Args:
         config: Parsed ``OllyConfig``.
-        backends: Dict mapping connection name to adapter instance.
+        backends: Dict mapping connection name to adapter instance. Connections
+            missing from the dict are shown with config-only output.
         connection_name: Optional connection name to explain.
 
     Returns:
@@ -73,13 +76,25 @@ def explain_config(
     """
     connection_explains: list[ConnectionExplain] = []
     connections = resolve_connections(config, connection_name)
+    logger.info("Explaining %d connection(s)", len(connections))
 
     for name, nc in connections:
-        backend = backends[name]
-        available_schemas = backend.list_schemas()
+        backend = backends.get(name)
+        if backend is None:
+            logger.warning("Connection '%s': no backend available, showing config only", name)
+            available_schemas: list[str] = []
+        else:
+            logger.info("Connection '%s': connected successfully", name)
+            try:
+                available_schemas = backend.list_schemas()
+                logger.info("Connection '%s': found %d schemas", name, len(available_schemas))
+            except Exception:
+                logger.warning("Connection '%s': list_schemas failed, falling back to config only", name)
+                available_schemas = []
         exclude_schemas = nc.selection.exclude_schemas
         selected_schemas = select_schema_names(nc.selection, available_schemas)
         selected_set = set(selected_schemas)
+        logger.info("Connection '%s': selected %d of %d schemas", name, len(selected_schemas), len(available_schemas))
 
         schema_matches: list[SchemaMatch] = []
         for schema in available_schemas:
@@ -91,8 +106,13 @@ def explain_config(
                 schema_matches.append(
                     SchemaMatch(name=schema, included=False, reason=reason)
                 )
-        tables = backend.fetch_schema_info(selected_schemas)
-        tables = filter_table_infos(nc.selection, tables)
+        if backend is not None and selected_schemas:
+            logger.info("Connection '%s': fetching schema info for %s", name, selected_schemas)
+            tables = backend.fetch_schema_info(selected_schemas)
+            tables = filter_table_infos(nc.selection, tables)
+            logger.info("Connection '%s': found %d tables after filtering", name, len(tables))
+        else:
+            tables = []
 
         table_matches = [f"{t.schema_name}.{t.table_name}" for t in tables]
         table_settings = {

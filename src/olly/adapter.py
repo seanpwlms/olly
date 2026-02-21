@@ -108,6 +108,7 @@ def connect_typed(conn: ConnectionConfig) -> Adapter:
         return BigQueryAdapter(
             conn.project,
             dataset=conn.dataset,
+            region=conn.region or "us",
             use_information_schema_row_counts=conn.use_information_schema_row_counts,
             **conn.extras,
         )

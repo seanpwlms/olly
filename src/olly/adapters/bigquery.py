@@ -24,6 +24,7 @@ class BigQueryAdapter(BaseAdapter):
         project: str,
         *,
         dataset: str | None = None,
+        region: str = "us",
         use_information_schema_row_counts: bool = True,
         **connect_kwargs: Any,
     ) -> None:
@@ -32,6 +33,9 @@ class BigQueryAdapter(BaseAdapter):
         Args:
             project: GCP project ID.
             dataset: Optional default dataset name.
+            region: BigQuery region (e.g. ``"us"``, ``"eu"``). Used when
+                querying ``INFORMATION_SCHEMA`` views that require a
+                region qualifier.
             use_information_schema_row_counts: If True, read row counts from
                 INFORMATION_SCHEMA instead of running COUNT(*) queries.
             **connect_kwargs: Extra keyword arguments forwarded to
@@ -42,7 +46,30 @@ class BigQueryAdapter(BaseAdapter):
             dataset_id=dataset,
             **connect_kwargs,
         )
+        self._region = region
         self._use_information_schema_row_counts = use_information_schema_row_counts
+
+    # --- BigQuery raw_sql wrapper ---
+
+    def _execute_sql(self, sql: str) -> list[tuple[Any, ...]]:
+        """Execute raw SQL and return rows as a list of tuples.
+
+        The Ibis BigQuery backend returns a ``RowIterator`` from
+        ``raw_sql()`` which lacks the DBAPI cursor interface. This
+        helper normalises the result.
+        """
+        result = self._conn.raw_sql(sql)
+        return [tuple(row.values()) for row in result]
+
+    def _fetch_scalar_str(self, sql: str, table_label: str) -> str | None:
+        """Override base to use ``_execute_sql``."""
+        try:
+            rows = self._execute_sql(sql)
+            if not rows or rows[0][0] is None:
+                return None
+            return str(rows[0][0])
+        except Exception as exc:
+            raise RuntimeError(f"Failed to run query for {table_label}") from exc
 
     # --- BigQuery-specific quoting ---
 
@@ -67,16 +94,16 @@ class BigQueryAdapter(BaseAdapter):
     # --- Ibis table access ---
 
     def _get_ibis_table(self, schema_name: str, table_name: str) -> Any:
-        return self._conn.table(table_name, schema=schema_name)
+        return self._conn.table(table_name, database=schema_name)
 
     def _list_ibis_tables(self, schema_name: str) -> list[str]:
-        return self._conn.list_tables(schema=schema_name)
+        return self._conn.list_tables(database=schema_name)
 
     # --- Schema introspection ---
 
     def list_schemas(self) -> list[str]:
         """Return all dataset names in the connected project."""
-        return self._conn.list_schemas()
+        return self._conn.list_databases()
 
     def fetch_schema_info(self, schemas: list[str]) -> list[TableInfo]:
         """Introspect tables and columns for the given schemas.
@@ -91,8 +118,8 @@ class BigQueryAdapter(BaseAdapter):
         tables: list[TableInfo] = []
         for schema_name in schemas:
             metadata = self._fetch_table_metadata(schema_name)
-            for table_name in self._conn.list_tables(schema=schema_name):
-                t = self._conn.table(table_name, schema=schema_name)
+            for table_name in self._conn.list_tables(database=schema_name):
+                t = self._conn.table(table_name, database=schema_name)
                 schema = t.schema()
                 table_type = metadata.get(table_name, {}).get("table_type")
                 if not isinstance(table_type, str) or not table_type:
@@ -118,14 +145,21 @@ class BigQueryAdapter(BaseAdapter):
     def _fetch_table_metadata(
         self, schema_name: str
     ) -> dict[str, dict[str, int | str | None]]:
-        """Query INFORMATION_SCHEMA.TABLES for table types and row counts."""
+        """Query INFORMATION_SCHEMA for table types and row counts.
+
+        Table types come from ``TABLES``; row counts come from
+        ``TABLE_STORAGE`` via a LEFT JOIN so the query works even when
+        storage metadata is unavailable.
+        """
         try:
             safe_schema = schema_name.replace("`", "")
-            result = self._conn.raw_sql(
-                "SELECT table_name, table_type, row_count "
-                f"FROM `{safe_schema}.INFORMATION_SCHEMA.TABLES`"
+            safe_region = self._region.replace("`", "")
+            rows = self._execute_sql(
+                "SELECT t.table_name, t.table_type, s.total_rows "
+                f"FROM `{safe_schema}.INFORMATION_SCHEMA.TABLES` t "
+                f"LEFT JOIN `region-{safe_region}`.INFORMATION_SCHEMA.TABLE_STORAGE s "
+                f"ON t.table_schema = s.table_schema AND t.table_name = s.table_name"
             )
-            rows = result.fetchall()
         except Exception as exc:
             raise RuntimeError(
                 f"Failed to read table metadata for schema {schema_name}"
@@ -146,11 +180,11 @@ class BigQueryAdapter(BaseAdapter):
         try:
             safe_table = table_name.replace("'", "''")
             safe_schema = schema_name.replace("`", "")
-            result = self._conn.raw_sql(
+            rows = self._execute_sql(
                 f"SELECT table_type FROM `{safe_schema}.INFORMATION_SCHEMA.TABLES` "
                 f"WHERE table_name = '{safe_table}'"
             )
-            row = result.fetchone()
+            row = rows[0] if rows else None
             if row:
                 val = row[0].upper()
                 if "VIEW" in val:
@@ -203,7 +237,7 @@ class BigQueryAdapter(BaseAdapter):
                 )
             else:
                 try:
-                    t = self._conn.table(ti.table_name, schema=ti.schema_name)
+                    t = self._conn.table(ti.table_name, database=ti.schema_name)
                     count = t.count().execute()
                     records.append(
                         VolumeRecord(
@@ -232,7 +266,7 @@ class BigQueryAdapter(BaseAdapter):
             RuntimeError: If the query fails.
         """
         try:
-            t = self._conn.table(table_name, schema=schema_name)
+            t = self._conn.table(table_name, database=schema_name)
             result = t[column].max().execute()
             if result is None:
                 return None
@@ -286,7 +320,7 @@ class BigQueryAdapter(BaseAdapter):
         self,
         schemas: list[str],
         lookback_days: int,
-        region: str = "us",
+        region: str | None = None,
     ) -> list[UsageRecord]:
         """Query INFORMATION_SCHEMA.JOBS_BY_PROJECT for table access history.
 
@@ -303,6 +337,7 @@ class BigQueryAdapter(BaseAdapter):
         if not schemas:
             return []
 
+        effective_region = (region or self._region).replace("`", "")
         schema_filter = ", ".join(
             f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schemas
         )
@@ -311,7 +346,7 @@ class BigQueryAdapter(BaseAdapter):
             "SELECT ref.dataset_id AS schema_name, "
             "ref.table_id AS table_name, "
             "MAX(j.creation_time) AS last_queried_at "
-            f"FROM `region-{region.replace('`', '')}`.INFORMATION_SCHEMA.JOBS_BY_PROJECT j, "
+            f"FROM `region-{effective_region}`.INFORMATION_SCHEMA.JOBS_BY_PROJECT j, "
             "UNNEST(referenced_tables) AS ref "
             "WHERE j.job_type = 'QUERY' "
             "AND j.state = 'DONE' "
@@ -322,8 +357,7 @@ class BigQueryAdapter(BaseAdapter):
         )
 
         try:
-            result = self._conn.raw_sql(sql)
-            rows = result.fetchall()
+            rows = self._execute_sql(sql)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to fetch table usage from INFORMATION_SCHEMA.JOBS_BY_PROJECT"
@@ -351,7 +385,7 @@ class BigQueryAdapter(BaseAdapter):
         self,
         schemas: list[str],
         lookback_days: int,
-        region: str = "us",
+        region: str | None = None,
         price_per_tb_usd: float = 6.25,
     ) -> list[CostRecord]:
         """Query INFORMATION_SCHEMA.JOBS_BY_PROJECT for per-table query costs.
@@ -368,6 +402,7 @@ class BigQueryAdapter(BaseAdapter):
         if not schemas:
             return []
 
+        effective_region = (region or self._region).replace("`", "")
         schema_filter = ", ".join(
             f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schemas
         )
@@ -379,7 +414,7 @@ class BigQueryAdapter(BaseAdapter):
             "j.user_email, "
             "SUM(j.total_bytes_billed) AS total_bytes_billed, "
             "COUNT(*) AS query_count "
-            f"FROM `region-{region.replace('`', '')}`.INFORMATION_SCHEMA.JOBS_BY_PROJECT j, "
+            f"FROM `region-{effective_region}`.INFORMATION_SCHEMA.JOBS_BY_PROJECT j, "
             "UNNEST(referenced_tables) AS ref "
             "WHERE j.job_type = 'QUERY' "
             "AND j.state = 'DONE' "
@@ -390,8 +425,7 @@ class BigQueryAdapter(BaseAdapter):
         )
 
         try:
-            result = self._conn.raw_sql(sql)
-            rows = result.fetchall()
+            rows = self._execute_sql(sql)
         except Exception as exc:
             raise RuntimeError(
                 "Failed to fetch query costs from INFORMATION_SCHEMA.JOBS_BY_PROJECT"
