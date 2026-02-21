@@ -41,6 +41,7 @@ class ConnectionConfig:
     url: str | None = None  # postgres
     project: str | None = None  # bigquery
     dataset: str | None = None  # bigquery
+    region: str | None = None  # bigquery
     account: str | None = None  # snowflake
     database: str | None = None  # snowflake
     use_information_schema_row_counts: bool = True  # bigquery
@@ -54,6 +55,7 @@ _KNOWN_CONN_KEYS = {
     "url",
     "project",
     "dataset",
+    "region",
     "account",
     "database",
     "use_information_schema_row_counts",
@@ -360,6 +362,7 @@ def _parse_connection_section(conn_raw: dict, context: str) -> ConnectionConfig:
         url=conn_raw.get("url"),
         project=conn_raw.get("project"),
         dataset=conn_raw.get("dataset"),
+        region=conn_raw.get("region"),
         account=conn_raw.get("account"),
         database=conn_raw.get("database"),
         use_information_schema_row_counts=conn_raw.get(
@@ -423,6 +426,8 @@ def _connection_to_dict(conn: ConnectionConfig) -> dict:
             conn_dict["project"] = conn.project
         if conn.dataset is not None:
             conn_dict["dataset"] = conn.dataset
+        if conn.region is not None:
+            conn_dict["region"] = conn.region
         if not conn.use_information_schema_row_counts:
             conn_dict["use_information_schema_row_counts"] = False
     elif conn.type == "snowflake":

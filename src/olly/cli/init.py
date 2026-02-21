@@ -40,19 +40,26 @@ def run_init() -> None:
 
     conn = _prompt_connection(conn_type)
 
-    # Validate connection
     nc = NamedConnection(
         name="primary", connection=conn, selection=Selection()
     )
     config = OllyConfig(
         connections={"primary": nc}, settings=Settings()
     )
-    try:
-        adapter = connect_typed(conn)
-        console.print("[green]Connection successful.[/green]\n")
-    except Exception as e:
-        console.print(f"[red]Connection failed: {e}[/red]")
-        raise SystemExit(1)
+
+    # Validate connection (skip for remote warehouses that need credentials)
+    adapter = None
+    if conn_type in ("bigquery", "snowflake"):
+        console.print(
+            "[dim]Skipping connection check — will validate on first snapshot.[/dim]\n"
+        )
+    else:
+        try:
+            adapter = connect_typed(conn)
+            console.print("[green]Connection successful.[/green]\n")
+        except Exception as e:
+            console.print(f"[red]Connection failed: {e}[/red]")
+            raise SystemExit(1)
 
     # Write config
     config_path = Path("olly.toml")
@@ -60,7 +67,7 @@ def run_init() -> None:
     console.print(f"\n[green]Wrote {config_path}[/green]")
 
     # Initialize state store
-    with open_state(config, adapter, conn.type):
+    with open_state(config, adapter, conn.type if adapter else ""):
         pass  # initialization happens in constructor
     if config.settings.state_schema:
         console.print(
@@ -98,7 +105,12 @@ def _prompt_connection(conn_type: str) -> ConnectionConfig:
         dataset = (
             console.input("Default dataset [dim](optional)[/dim]: ").strip() or None
         )
-        return ConnectionConfig(type="bigquery", project=project, dataset=dataset)
+        region = (
+            console.input("Region [dim](default: us)[/dim]: ").strip() or None
+        )
+        return ConnectionConfig(
+            type="bigquery", project=project, dataset=dataset, region=region
+        )
     # snowflake
     account = console.input("Snowflake account: ").strip()
     if not account:
