@@ -70,15 +70,14 @@ class _StubTable:
         return _StubColumn(self._max_val)
 
 
-class _StubResult:
-    def __init__(self, rows: list):
-        self._rows = list(rows)
+class _StubRow:
+    """Mock row object with a .values() method to match BigQuery RowIterator."""
 
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
+    def __init__(self, vals: tuple):
+        self._vals = vals
 
-    def fetchall(self):
-        return self._rows
+    def values(self):
+        return self._vals
 
 
 class _StubConn:
@@ -99,19 +98,19 @@ class _StubConn:
     def raw_sql(self, sql: str):
         self.queries.append(sql)
         rows = self._raw_sql_rows.pop(0) if self._raw_sql_rows else []
-        return _StubResult(rows)
+        return [_StubRow(tuple(row)) for row in rows]
 
-    def list_tables(self, schema: str | None = None) -> list[str]:
-        if schema is None:
+    def list_tables(self, database: str | None = None) -> list[str]:
+        if database is None:
             return []
-        return self._table_names.get(schema, [])
+        return self._table_names.get(database, [])
 
-    def table(self, name: str, schema: str | None = None) -> _StubTable | None:
-        if schema is None:
+    def table(self, name: str, database: str | None = None) -> _StubTable | None:
+        if database is None:
             return None
-        return self._tables.get((schema, name))
+        return self._tables.get((database, name))
 
-    def list_schemas(self):
+    def list_databases(self):
         return self._schemas
 
 
@@ -122,6 +121,7 @@ def _make_adapter(
     table_names: dict[str, list[str]] | None = None,
     schemas: list[str] | None = None,
     use_info_schema_row_counts: bool = True,
+    region: str = "us",
 ) -> BigQueryAdapter:
     adapter = BigQueryAdapter.__new__(BigQueryAdapter)
     adapter._conn = _StubConn(
@@ -131,6 +131,7 @@ def _make_adapter(
         schemas=schemas,
     )
     adapter._use_information_schema_row_counts = use_info_schema_row_counts
+    adapter._region = region
     return adapter
 
 
@@ -139,15 +140,19 @@ def _make_error_adapter() -> BigQueryAdapter:
         def raw_sql(self, sql: str):
             raise Exception("connection lost")
 
-        def table(self, name, schema=None):
+        def table(self, name, database=None):
             raise Exception("connection lost")
 
-        def list_tables(self, schema=None):
+        def list_tables(self, database=None):
+            raise Exception("connection lost")
+
+        def list_databases(self):
             raise Exception("connection lost")
 
     adapter = BigQueryAdapter.__new__(BigQueryAdapter)
     adapter._conn = _ErrorConn()
     adapter._use_information_schema_row_counts = True
+    adapter._region = "us"
     return adapter
 
 

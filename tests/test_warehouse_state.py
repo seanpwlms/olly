@@ -2,7 +2,7 @@ import ibis
 import pytest
 
 from olly.models import ColumnInfo, CostRecord, TableInfo, VolumeRecord
-from olly.warehouse_state import WarehouseStateStore
+from olly.state import WarehouseStateStore
 
 
 @pytest.fixture

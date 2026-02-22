@@ -45,7 +45,7 @@ def take_snapshot(
         logger.debug("[%s] Filtered to %d tables", name, len(tables))
         volumes = backend.fetch_row_counts(tables)
 
-        with open_state(config, backend, nc.connection.type) as state_db:
+        with open_state(config, backend) as state_db:
             snapshot_id = state_db.create_snapshot(connection_name=name)
             state_db.store_schema_data(snapshot_id, tables)
             state_db.store_volume_data(snapshot_id, volumes)

@@ -11,7 +11,6 @@ from prefab_ui.components import (
     CardTitle,
     Column,
     DataTable,
-    H3,
     Row,
     Text,
 )

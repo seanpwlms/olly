@@ -4,9 +4,16 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from olly.config import load_config
 from olly.models import ColumnInfo, DbtFinding, Finding, TableInfo
 from olly.results import get_default_findings_path
-from olly.state import StateStore
+from olly.state import BaseStateStore
+
+
+def get_all_connections() -> list[str]:
+    """Return list of all configured connection names."""
+    config = load_config()
+    return list(config.connections.keys())
 
 
 @dataclass
@@ -33,6 +40,23 @@ class SchemaDiff:
     removed: list[ColumnInfo]
     type_changes: list[tuple[str, str, str]]  # (column, old_type, new_type)
     nullable_changes: list[tuple[str, bool, bool]]  # (column, old, new)
+
+
+@dataclass
+class FindingsStats:
+    total_count: int
+    error_count: int
+    warning_count: int
+    by_check_type: dict[str, tuple[int, int]]  # {check_type: (errors, warnings)}
+    by_connection: dict[str, tuple[int, int]]  # {connection: (errors, warnings)}
+
+
+@dataclass
+class SnapshotInfo:
+    snapshot_id: int
+    created_at: str
+    connection_name: str
+    table_count: int
 
 
 @dataclass
@@ -141,7 +165,7 @@ def load_cost_summary(findings_path: Path | None = None) -> dict | None:
 def get_stats(
     findings: list[Finding],
     generated_at: str | None,
-    state_db: StateStore,
+    state_db: BaseStateStore,
     connection_name: str = "",
 ) -> DashboardStats:
     """Compute summary stats for the dashboard."""
@@ -155,7 +179,7 @@ def get_stats(
 
 
 def get_volume_timeseries(
-    state_db: StateStore,
+    state_db: BaseStateStore,
     schema_name: str,
     table_name: str,
     depth: int = 30,
@@ -167,7 +191,7 @@ def get_volume_timeseries(
 
 
 def get_table_info(
-    state_db: StateStore, schema_name: str, table_name: str, connection_name: str = ""
+    state_db: BaseStateStore, schema_name: str, table_name: str, connection_name: str = ""
 ) -> TableInfo | None:
     """Get schema info for a specific table from the latest snapshot."""
     tables = state_db.get_latest_schema(connection_name)
@@ -178,7 +202,7 @@ def get_table_info(
 
 
 def get_volume_stats(
-    state_db: StateStore,
+    state_db: BaseStateStore,
     schema_name: str,
     table_name: str,
     depth: int = 30,
@@ -211,7 +235,7 @@ def get_volume_stats(
 
 
 def get_table_history(
-    state_db: StateStore, schema_name: str, table_name: str, connection_name: str = ""
+    state_db: BaseStateStore, schema_name: str, table_name: str, connection_name: str = ""
 ) -> TableHistory:
     """Get first-seen date and snapshot count for a table."""
     first_seen, snapshot_count = state_db.get_table_first_seen(
@@ -228,7 +252,7 @@ def get_table_history(
 
 
 def get_schema_diff(
-    state_db: StateStore,
+    state_db: BaseStateStore,
     schema_name: str,
     table_name: str,
     connection_name: str = "",
@@ -281,3 +305,122 @@ def get_schema_diff(
         type_changes=type_changes,
         nullable_changes=nullable_changes,
     )
+
+
+def get_findings_stats(findings: list[Finding]) -> FindingsStats:
+    """Compute summary statistics for findings."""
+    error_count = sum(1 for f in findings if f.severity == "error")
+    warning_count = sum(1 for f in findings if f.severity == "warning")
+
+    # Group by check_type
+    by_check_type: dict[str, tuple[int, int]] = {}
+    for f in findings:
+        errors, warnings = by_check_type.get(f.check_type, (0, 0))
+        if f.severity == "error":
+            by_check_type[f.check_type] = (errors + 1, warnings)
+        else:
+            by_check_type[f.check_type] = (errors, warnings + 1)
+
+    # Group by connection
+    by_connection: dict[str, tuple[int, int]] = {}
+    for f in findings:
+        conn = f.connection_name or "default"
+        errors, warnings = by_connection.get(conn, (0, 0))
+        if f.severity == "error":
+            by_connection[conn] = (errors + 1, warnings)
+        else:
+            by_connection[conn] = (errors, warnings + 1)
+
+    return FindingsStats(
+        total_count=len(findings),
+        error_count=error_count,
+        warning_count=warning_count,
+        by_check_type=by_check_type,
+        by_connection=by_connection,
+    )
+
+
+def filter_findings(
+    findings: list[Finding],
+    check_type: str = "",
+    severity: str = "",
+    schema_name: str = "",
+    connection: str = "",
+    q: str = "",
+) -> list[Finding]:
+    """Filter findings by multiple criteria."""
+    result = findings
+
+    if check_type:
+        result = [f for f in result if f.check_type == check_type]
+    if severity:
+        result = [f for f in result if f.severity == severity]
+    if schema_name:
+        result = [f for f in result if f.schema_name == schema_name]
+    if connection:
+        result = [f for f in result if (f.connection_name or "default") == connection]
+    if q:
+        needle = q.lower()
+        result = [
+            f
+            for f in result
+            if needle in f.description.lower()
+            or needle in f.table_name.lower()
+            or needle in f.schema_name.lower()
+        ]
+
+    return result
+
+
+def get_snapshot_history(
+    state_db: BaseStateStore, days: int, connection_name: str = ""
+) -> list[SnapshotInfo]:
+    """Get recent snapshots with metadata."""
+    # Query snapshots table for recent entries
+    # This is a simplified implementation - we'll need to add this to BaseStateStore if not already present
+    # For now, we'll return an empty list and implement the actual query when we have access to the state DB
+    # TODO: Add get_recent_snapshots method to BaseStateStore
+    return []
+
+
+def get_cost_timeseries(
+    state_db: BaseStateStore, depth: int, connection_name: str = ""
+) -> list[dict]:
+    """Get cost trend data for charting."""
+    cost_history = state_db.get_cost_history(depth, connection_name)
+    return [{"snapshot": ts, "cost": cost} for ts, cost in cost_history]
+
+
+def get_findings_by_connection(findings: list[Finding]) -> dict[str, tuple[int, int]]:
+    """Group findings by connection_name."""
+    result = {}
+    for f in findings:
+        conn = f.connection_name or "default"
+        errors, warnings = result.get(conn, (0, 0))
+        if f.severity == "error":
+            result[conn] = (errors + 1, warnings)
+        else:
+            result[conn] = (errors, warnings + 1)
+    return result
+
+
+def get_critical_findings(findings: list[Finding], limit: int = 5) -> list[Finding]:
+    """Get top N critical findings (errors first, sorted by importance)."""
+    errors = [f for f in findings if f.severity == "error"]
+    # Sort by check type priority: volume > schema > freshness > integrity
+    priority = {"volume": 0, "schema": 1, "freshness": 2, "integrity": 3}
+    errors.sort(key=lambda f: priority.get(f.check_type, 99))
+    return errors[:limit]
+
+
+def get_findings_by_table(findings: list[Finding]) -> dict[tuple[str, str], tuple[int, int]]:
+    """Group findings by (schema, table)."""
+    result = {}
+    for f in findings:
+        key = (f.schema_name, f.table_name)
+        errors, warnings = result.get(key, (0, 0))
+        if f.severity == "error":
+            result[key] = (errors + 1, warnings)
+        else:
+            result[key] = (errors, warnings + 1)
+    return result

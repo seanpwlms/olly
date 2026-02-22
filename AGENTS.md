@@ -28,6 +28,7 @@ CLI is a thin wrapper (`src/olly/__init__.py` → `src/olly/cli/`). All logic li
 - `adapters/postgres.py` — `PostgresAdapter`: same interface for Postgres
 - `adapters/bigquery.py` — `BigQueryAdapter`: same interface for BigQuery
 - `state.py` — `StateDB` class wrapping SQLite (`~/.olly/<project-hash>/state.db`) for snapshot storage
+- `checker.py` — core check orchestration (`run_checks`, `_run_dbt_checks`); imports all check modules and coordinates execution
 - `models.py` — shared dataclasses (`TableInfo`, `VolumeRecord`, `Finding`, `Sync`, etc.) and enums (`IntegrityMethod`, `WindowOp`)
 - `_import.py` — shared helpers for importing user-specified Python modules by file path or dotted name
 - `contracts.py` — `TableContract` declarative API for schema assertions
@@ -41,7 +42,7 @@ CLI is a thin wrapper (`src/olly/__init__.py` → `src/olly/cli/`). All logic li
 - `checks/dbt.py` — parse dbt `run_results.json` for failures
 - `dashboard/` — FastAPI + Jinja2 web UI (`uv run olly serve`)
 
-Key entry points for programmatic use: `cli/snapshot.py:take_snapshot()`, `cli/check.py:run_checks()`.
+Key entry points for programmatic use: `cli/snapshot.py:take_snapshot()`, `checker.py:run_checks()`.
 
 ## Adapter Protocol
 

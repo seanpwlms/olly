@@ -3,13 +3,13 @@ from unittest.mock import patch
 import duckdb
 import pytest
 
+from olly.checker import run_checks
 from olly.cli.check import (
     print_cost_summary,
     print_dbt_findings_table,
     print_findings_json,
     print_findings_table,
     run_check,
-    run_checks,
 )
 from olly.cli.config_explain import run_config_explain
 from olly.cli.init import run_init
@@ -46,6 +46,8 @@ def test_run_snapshot_and_check(tmp_path, monkeypatch, duckdb_path):
     config_path = tmp_path / "olly.toml"
     config = _write_config(config_path, duckdb_path)
 
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
     run_check(output_json=True, write_results=False)
 
@@ -93,6 +95,8 @@ def test_run_check_table_output_no_findings(tmp_path, monkeypatch, duckdb_path, 
     """Table output mode, no findings -> 'All checks passed'."""
     monkeypatch.chdir(tmp_path)
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     run_check(output_json=False, write_results=False)
@@ -106,6 +110,8 @@ def test_run_check_table_output_with_findings(
     """Table output mode with findings -> prints table + summary + exits 1."""
     monkeypatch.chdir(tmp_path)
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     fake_finding = Finding(
@@ -126,6 +132,8 @@ def test_run_check_write_results(tmp_path, monkeypatch, duckdb_path):
     """write_results=True -> calls write_findings_json."""
     monkeypatch.chdir(tmp_path)
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     run_check(output_json=True, write_results=True)
@@ -136,6 +144,8 @@ def test_run_check_exit_code_1_with_findings(tmp_path, monkeypatch, duckdb_path)
     """Exit code 1 when findings are present."""
     monkeypatch.chdir(tmp_path)
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     fake_finding = Finding(
@@ -253,6 +263,8 @@ def test_run_dbt_checks_relative_path(tmp_path, monkeypatch, duckdb_path):
         config_path=tmp_path / "olly.toml",
     )
     write_config(config, tmp_path / "olly.toml")
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     # run_checks will call _run_dbt_checks internally; the file won't exist
@@ -265,6 +277,8 @@ def test_run_check_dbt_findings_summary(tmp_path, monkeypatch, duckdb_path, caps
     """dbt findings present -> prints dbt summary counts."""
     monkeypatch.chdir(tmp_path)
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     dbt_finding = DbtFinding(
@@ -289,6 +303,8 @@ def test_run_check_calls_slack_alert(tmp_path, monkeypatch, duckdb_path):
     """send_slack_alert is called after run_checks completes."""
     monkeypatch.chdir(tmp_path)
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     with patch("olly.cli.check.send_slack_alert") as mock_slack:
@@ -300,6 +316,8 @@ def test_run_check_passes_findings_to_slack(tmp_path, monkeypatch, duckdb_path):
     """Findings from run_checks are forwarded to send_slack_alert."""
     monkeypatch.chdir(tmp_path)
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    # Take 2 snapshots to enable checks
+    take_snapshot(config)
     take_snapshot(config)
 
     fake_finding = Finding(

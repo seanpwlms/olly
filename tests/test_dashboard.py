@@ -7,6 +7,11 @@ from fastapi.testclient import TestClient
 
 from olly.dashboard.charts import cost_by_table_chart, volume_trend_chart
 from olly.dashboard.data import (
+    filter_findings,
+    get_critical_findings,
+    get_findings_by_connection,
+    get_findings_by_table,
+    get_findings_stats,
     get_schema_diff,
     get_stats,
     get_table_history,
@@ -340,10 +345,18 @@ def dashboard_client(tmp_path, monkeypatch):
     monkeypatch.setattr("olly.results.get_olly_dir", mock_get_olly_dir)
 
     @contextmanager
-    def mock_state_db():
+    def mock_state_db(connection_name: str = ""):
         yield StateDB(db_path=state_db_path), ""
 
+    def mock_get_current_connection(connection_param: str = ""):
+        return "test_connection"
+
+    def mock_get_all_connections():
+        return ["test_connection"]
+
     monkeypatch.setattr("olly.dashboard.routes._state_db", mock_state_db)
+    monkeypatch.setattr("olly.dashboard.routes._get_current_connection", mock_get_current_connection)
+    monkeypatch.setattr("olly.dashboard.data.get_all_connections", mock_get_all_connections)
 
     from olly.dashboard.app import app
 
@@ -504,6 +517,90 @@ def test_cost_by_table_chart():
     assert len(spec["data"]["values"]) == 2
 
 
+def test_get_findings_stats():
+    findings = [
+        Finding("schema", "error", "main", "orders", "desc"),
+        Finding("volume", "warning", "main", "customers", "desc", connection_name="conn1"),
+        Finding("volume", "error", "main", "customers", "desc2", connection_name="conn2"),
+    ]
+    stats = get_findings_stats(findings)
+    assert stats.total_count == 3
+    assert stats.error_count == 2
+    assert stats.warning_count == 1
+    assert stats.by_check_type["schema"] == (1, 0)
+    assert stats.by_check_type["volume"] == (1, 1)
+    assert stats.by_connection["default"] == (1, 0)  # schema finding has no connection_name
+    assert stats.by_connection["conn1"] == (0, 1)
+    assert stats.by_connection["conn2"] == (1, 0)
+
+
+def test_filter_findings():
+    findings = [
+        Finding("schema", "error", "main", "orders", "Column added"),
+        Finding("volume", "warning", "main", "customers", "Z-score high"),
+        Finding("schema", "error", "staging", "products", "Column removed", connection_name="conn1"),
+    ]
+
+    # Filter by check_type
+    schema_findings = filter_findings(findings, check_type="schema")
+    assert len(schema_findings) == 2
+
+    # Filter by severity
+    errors = filter_findings(findings, severity="error")
+    assert len(errors) == 2
+
+    # Filter by schema_name
+    main_findings = filter_findings(findings, schema_name="main")
+    assert len(main_findings) == 2
+
+    # Filter by connection
+    conn1_findings = filter_findings(findings, connection="conn1")
+    assert len(conn1_findings) == 1
+
+    # Filter by query
+    query_findings = filter_findings(findings, q="column")
+    assert len(query_findings) == 2
+
+
+def test_get_findings_by_connection():
+    findings = [
+        Finding("schema", "error", "main", "orders", "desc", connection_name="conn1"),
+        Finding("volume", "warning", "main", "customers", "desc", connection_name="conn1"),
+        Finding("volume", "error", "main", "products", "desc", connection_name="conn2"),
+        Finding("schema", "warning", "main", "users", "desc"),  # No connection_name
+    ]
+    by_conn = get_findings_by_connection(findings)
+    assert by_conn["conn1"] == (1, 1)
+    assert by_conn["conn2"] == (1, 0)
+    assert by_conn["default"] == (0, 1)
+
+
+def test_get_critical_findings():
+    findings = [
+        Finding("freshness", "error", "main", "orders", "stale"),
+        Finding("volume", "error", "main", "customers", "spike"),
+        Finding("schema", "error", "main", "products", "changed"),
+        Finding("volume", "warning", "main", "users", "anomaly"),
+        Finding("integrity", "error", "main", "events", "mismatch"),
+    ]
+    critical = get_critical_findings(findings, limit=2)
+    assert len(critical) == 2
+    # Should prioritize by type: volume > schema > freshness > integrity
+    assert critical[0].check_type == "volume"
+    assert critical[1].check_type == "schema"
+
+
+def test_get_findings_by_table():
+    findings = [
+        Finding("schema", "error", "main", "orders", "desc"),
+        Finding("volume", "warning", "main", "orders", "desc"),
+        Finding("volume", "error", "main", "customers", "desc"),
+    ]
+    by_table = get_findings_by_table(findings)
+    assert by_table[("main", "orders")] == (1, 1)
+    assert by_table[("main", "customers")] == (1, 0)
+
+
 def test_usage_page_empty(dashboard_client):
     resp = dashboard_client.get("/usage")
     assert resp.status_code == 200
@@ -557,10 +654,18 @@ def test_usage_page_with_findings(tmp_path, monkeypatch):
     monkeypatch.setattr("olly.results.get_olly_dir", mock_get_olly_dir)
 
     @contextmanager
-    def mock_state_db():
+    def mock_state_db(connection_name: str = ""):
         yield StateDB(db_path=state_db_path), ""
 
+    def mock_get_current_connection(connection_param: str = ""):
+        return "test_connection"
+
+    def mock_get_all_connections():
+        return ["test_connection"]
+
     monkeypatch.setattr("olly.dashboard.routes._state_db", mock_state_db)
+    monkeypatch.setattr("olly.dashboard.routes._get_current_connection", mock_get_current_connection)
+    monkeypatch.setattr("olly.dashboard.data.get_all_connections", mock_get_all_connections)
 
     from olly.dashboard.app import app
 

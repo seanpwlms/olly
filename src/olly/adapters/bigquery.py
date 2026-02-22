@@ -61,6 +61,16 @@ class BigQueryAdapter(BaseAdapter):
         result = self._conn.raw_sql(sql)
         return [tuple(row.values()) for row in result]
 
+    def _fetch_scalar(self, sql: str, table_label: str) -> int:
+        """Override base to use ``_execute_sql``."""
+        try:
+            rows = self._execute_sql(sql)
+            if not rows or rows[0][0] is None:
+                return 0
+            return int(rows[0][0])
+        except Exception as exc:
+            raise RuntimeError(f"Failed to run query for {table_label}") from exc
+
     def _fetch_scalar_str(self, sql: str, table_label: str) -> str | None:
         """Override base to use ``_execute_sql``."""
         try:
