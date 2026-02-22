@@ -1,9 +1,9 @@
 """Seed a toy DuckDB warehouse for manual testing.
 
 Usage:
-    uv run python dev/seed_db.py          # fresh environment + baseline snapshot
-    uv run python dev/seed_db.py drift    # introduce schema/volume/freshness drift
-    uv run python dev/seed_db.py verify   # setup, run checks, drift, run checks
+    uv run python dev/seed_db.py          # fresh environment + 2 baseline snapshots
+    uv run python dev/seed_db.py drift    # introduce drift + take new snapshot
+    uv run python dev/seed_db.py verify   # full smoke test: setup → baseline check → drift → drift check
 """
 
 from __future__ import annotations
@@ -256,19 +256,23 @@ def setup() -> OllyConfig:
     )
     write_config(config, CONFIG_PATH)
 
-    # Take baseline snapshot (needs cwd in dev/ for StateDB)
+    # Take 2 baseline snapshots (checks need at least 2 to compare)
     original_cwd = os.getcwd()
     os.chdir(DEV_DIR)
     try:
-        results = take_snapshot(config)
+        results1 = take_snapshot(config)
+        for name, snapshot_id, table_count, col_count in results1:
+            print(f"Baseline snapshot #{snapshot_id}: {table_count} tables, {col_count} columns")
+
+        results2 = take_snapshot(config)
+        for name, snapshot_id, table_count, col_count in results2:
+            print(f"Baseline snapshot #{snapshot_id}: {table_count} tables, {col_count} columns")
     finally:
         os.chdir(original_cwd)
 
-    print("Setup complete!")
+    print("\nSetup complete!")
     print(f"  Database: {DB_PATH}")
     print(f"  Config:   {CONFIG_PATH}")
-    for name, snapshot_id, table_count, col_count in results:
-        print(f"  Snapshot #{snapshot_id}: {table_count} tables, {col_count} columns")
     print()
     print("Verify baseline is clean:")
     print("  cd dev && uv run olly check")
@@ -308,6 +312,7 @@ def add_volume_history(config: OllyConfig, snapshots: int | None = None) -> None
         snapshots = max(config.settings.min_history_for_anomaly - 1, 0)
     next_order_id = 1000
     next_product_id = 2000
+    next_customer_id = 100
 
     for i in range(snapshots):
         conn = duckdb.connect(str(DB_PATH))
@@ -325,6 +330,14 @@ def add_volume_history(config: OllyConfig, snapshots: int | None = None) -> None
         ]
         next_product_id += len(products)
         conn.executemany("INSERT INTO products VALUES (?, ?, ?)", products)
+
+        # Add customers to prevent freshness staleness warnings
+        customers = [
+            (next_customer_id + j, f"Customer {next_customer_id + j}", f"customer{next_customer_id + j}@example.com")
+            for j in range(1, 3)
+        ]
+        next_customer_id += len(customers)
+        conn.executemany("INSERT INTO customers VALUES (?, ?, ?)", customers)
 
         conn.close()
 
@@ -360,7 +373,7 @@ def assert_findings(
             sys.exit(1)
 
 
-def drift() -> None:
+def drift(config: OllyConfig | None = None) -> None:
     """Introduce schema, volume, freshness, contract, and integrity drift."""
     if not CONFIG_PATH.exists():
         print("Error: no olly.toml found in dev/. Run setup first:", file=sys.stderr)
@@ -413,6 +426,11 @@ def drift() -> None:
     target_conn.execute("DELETE FROM shipments WHERE id >= 4")
     target_conn.close()
 
+    # Take a snapshot to capture the drift
+    if config is None:
+        from olly.config import load_config
+        config = load_config(CONFIG_PATH)
+
     print("Drift introduced:")
     print(
         "  Schema:    orders.status added, customers.email dropped, new table 'returns'"
@@ -422,6 +440,12 @@ def drift() -> None:
     print("  Contracts: products.price changed to VARCHAR, customers.email dropped")
     print("  Integrity: target shipments rows deleted (COUNT mismatch)")
     print()
+
+    results = take_snapshot_in_dev(config)
+    for name, snapshot_id, table_count, col_count in results:
+        print(f"Drift snapshot #{snapshot_id}: {table_count} tables, {col_count} columns")
+
+    print()
     print("Now run:")
     print("  cd dev && uv run olly check")
 
@@ -429,12 +453,18 @@ def drift() -> None:
 def verify() -> None:
     """Run setup, confirm clean baseline, then introduce drift and re-check."""
     config = setup()
+
+    # Add volume history (setup already has 2 snapshots, this adds more)
+    add_volume_history(config)
+
+    # Verify baseline is clean (compares the 2 most recent snapshots, which should be identical)
     baseline_findings, _dbt = run_checks_in_dev(config)
     assert_findings(baseline_findings, expect_any=False)
 
-    add_volume_history(config)
+    # Introduce drift and take a new snapshot
+    drift(config)
 
-    drift()
+    # Verify drift is detected (compares pre-drift snapshot with post-drift snapshot)
     drift_findings, _dbt = run_checks_in_dev(config)
     assert_findings(
         drift_findings,
@@ -450,7 +480,7 @@ if __name__ == "__main__":
     if mode == "setup":
         setup()
     elif mode == "drift":
-        drift()
+        drift(config=None)
     elif mode == "verify":
         verify()
     else:

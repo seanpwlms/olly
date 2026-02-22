@@ -1,5 +1,5 @@
 from olly.config import ConnectionConfig, NamedConnection, OllyConfig, Selection
-from olly.models import ColumnInfo, CostRecord, TableInfo, VolumeRecord
+from olly.models import ColumnInfo, CostRecord, DbtFinding, Finding, TableInfo, VolumeRecord
 from olly.state import StateDB, open_state
 
 
@@ -110,6 +110,8 @@ def test_init_db_creates_tables(tmp_path):
         assert "schema_snapshot" in tables
         assert "volume_snapshot" in tables
         assert "cost_snapshot" in tables
+        assert "findings" in tables
+        assert "dbt_findings" in tables
 
 
 def test_init_db_idempotent(tmp_path):
@@ -143,6 +145,9 @@ def test_indexes_created(tmp_path):
         assert "idx_schema_snapshot_sid" in indexes
         assert "idx_volume_snapshot_sid" in indexes
         assert "idx_cost_snapshot_sid" in indexes
+        assert "idx_findings_created_at" in indexes
+        assert "idx_findings_connection" in indexes
+        assert "idx_dbt_findings_created_at" in indexes
 
 
 def test_get_latest_cost(state_db):
@@ -180,3 +185,147 @@ def test_open_state_returns_sqlite_by_default():
     store = open_state(config)
     assert isinstance(store, StateDB)
     store.close()
+
+
+def test_store_and_retrieve_findings(state_db):
+    """store_findings persists findings and get_findings_history retrieves them."""
+    findings = [
+        Finding(
+            check_type="schema",
+            severity="error",
+            schema_name="main",
+            table_name="orders",
+            description="Column removed",
+            details={"column": "status"},
+            connection_name="primary",
+        ),
+        Finding(
+            check_type="volume",
+            severity="warning",
+            schema_name="main",
+            table_name="users",
+            description="Volume anomaly detected",
+            details={"z_score": 3.2},
+            connection_name="primary",
+        ),
+    ]
+    state_db.store_findings(findings)
+
+    history = state_db.get_findings_history(limit=10)
+    assert len(history) == 2
+    # Most recent first (reversed order from insertion)
+    assert history[0].check_type == "volume"
+    assert history[0].severity == "warning"
+    assert history[0].table_name == "users"
+    assert history[0].details["z_score"] == 3.2
+    assert history[1].check_type == "schema"
+    assert history[1].severity == "error"
+    assert history[1].table_name == "orders"
+
+
+def test_store_empty_findings(state_db):
+    """store_findings handles empty list gracefully."""
+    state_db.store_findings([])
+    history = state_db.get_findings_history()
+    assert history == []
+
+
+def test_get_findings_history_with_connection_filter(state_db):
+    """get_findings_history can filter by connection name."""
+    findings = [
+        Finding(
+            check_type="schema",
+            severity="error",
+            schema_name="main",
+            table_name="t1",
+            description="Issue 1",
+            connection_name="conn1",
+        ),
+        Finding(
+            check_type="schema",
+            severity="error",
+            schema_name="main",
+            table_name="t2",
+            description="Issue 2",
+            connection_name="conn2",
+        ),
+    ]
+    state_db.store_findings(findings)
+
+    conn1_findings = state_db.get_findings_history(connection_name="conn1")
+    assert len(conn1_findings) == 1
+    assert conn1_findings[0].table_name == "t1"
+
+    conn2_findings = state_db.get_findings_history(connection_name="conn2")
+    assert len(conn2_findings) == 1
+    assert conn2_findings[0].table_name == "t2"
+
+
+def test_store_and_retrieve_dbt_findings(state_db):
+    """store_dbt_findings persists dbt findings and get_dbt_findings_history retrieves them."""
+    dbt_findings = [
+        DbtFinding(
+            resource_type="model",
+            severity="error",
+            unique_id="model.project.orders",
+            status="error",
+            execution_time=1.23,
+            description="Model failed",
+            details={"error": "SQL syntax error"},
+        ),
+        DbtFinding(
+            resource_type="test",
+            severity="warning",
+            unique_id="test.project.check_nulls",
+            status="warn",
+            execution_time=0.5,
+            description="Test warned",
+            details={"rows_failed": 3},
+        ),
+    ]
+    state_db.store_dbt_findings(dbt_findings)
+
+    history = state_db.get_dbt_findings_history(limit=10)
+    assert len(history) == 2
+    # Most recent first
+    assert history[0].resource_type == "test"
+    assert history[0].status == "warn"
+    assert history[0].details["rows_failed"] == 3
+    assert history[1].resource_type == "model"
+    assert history[1].execution_time == 1.23
+
+
+def test_store_empty_dbt_findings(state_db):
+    """store_dbt_findings handles empty list gracefully."""
+    state_db.store_dbt_findings([])
+    history = state_db.get_dbt_findings_history()
+    assert history == []
+
+
+def test_findings_tables_created(tmp_path):
+    """Findings tables are created during initialization."""
+    db_path = tmp_path / "findings.db"
+    with StateDB(db_path=db_path) as db:
+        tables = {
+            r[0]
+            for r in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "findings" in tables
+        assert "dbt_findings" in tables
+
+
+def test_findings_indexes_created(tmp_path):
+    """Indexes for findings tables are created."""
+    db_path = tmp_path / "findings_idx.db"
+    with StateDB(db_path=db_path) as db:
+        indexes = {
+            r[0]
+            for r in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='index'"
+            ).fetchall()
+        }
+        assert "idx_findings_created_at" in indexes
+        assert "idx_findings_connection" in indexes
+        assert "idx_dbt_findings_created_at" in indexes

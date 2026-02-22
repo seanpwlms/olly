@@ -1,6 +1,12 @@
 import cyclopts
 
+from olly.checker import run_checks
+
 app = cyclopts.App(name="olly", help="Data quality framework for data warehouses.")
+
+__all__ = [
+    "run_checks",
+]
 
 
 @app.command

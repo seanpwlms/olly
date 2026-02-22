@@ -3,8 +3,8 @@
 import duckdb
 
 from olly.adapter import connect_typed
+from olly.checker import run_checks
 from olly.checks.schema import check_schema
-from olly.cli.check import run_checks
 from olly.cli.snapshot import take_snapshot
 from olly.config import (
     ConnectionConfig,
@@ -18,7 +18,7 @@ from olly.state import StateDB
 
 
 def test_full_workflow(tmp_path):
-    """init -> snapshot -> alter schema -> check detects changes."""
+    """init -> snapshot -> alter schema -> snapshot -> check detects changes."""
     db_path = tmp_path / "warehouse.duckdb"
     state_path = tmp_path / "state.db"
 
@@ -59,13 +59,18 @@ def test_full_workflow(tmp_path):
     raw.execute("CREATE TABLE products (id INT NOT NULL, price DOUBLE)")
     raw.close()
 
-    # Fetch current state
+    # Take second snapshot with the changes
     backend2 = connect_typed(config.connections["primary"].connection)
     current_tables = backend2.fetch_schema_info(["main"])
+    current_volumes = backend2.fetch_row_counts(current_tables)
+    sid2 = state_db.create_snapshot()
+    state_db.store_schema_data(sid2, current_tables)
+    state_db.store_volume_data(sid2, current_volumes)
 
-    # Run schema checks
-    baseline_tables = state_db.get_latest_schema()
-    findings = check_schema(current_tables, baseline_tables)
+    # Run schema checks comparing the two snapshots
+    latest_tables = state_db.get_latest_schema()
+    baseline_tables = state_db.get_second_latest_schema()
+    findings = check_schema(latest_tables, baseline_tables)
     state_db.close()
 
     changes = {f.details["change"] for f in findings}
@@ -108,21 +113,29 @@ def test_snapshot_and_check_via_api(tmp_path, monkeypatch):
     # Monkeypatch so modules find config and state in tmp_path
     monkeypatch.chdir(tmp_path)
 
+    # Take first snapshot
     results = take_snapshot(config)
     _, snapshot_id, table_count, col_count = results[0]
     assert snapshot_id == 1
     assert table_count == 1
     assert col_count == 2
 
-    # No changes -> clean check
+    # Take second snapshot with no changes -> clean check
+    results = take_snapshot(config)
+    _, snapshot_id, _, _ = results[0]
+    assert snapshot_id == 2
     findings, _dbt, _cost = run_checks(config)
     assert findings == []
 
-    # Alter and check
+    # Alter and take another snapshot
     raw = duckdb.connect(str(db_path))
     raw.execute("ALTER TABLE t ADD COLUMN new_col INT")
     raw.close()
 
+    # Take third snapshot to capture the change
+    take_snapshot(config)
+
+    # Check detects the change between snapshots 2 and 3
     findings, _dbt, _cost = run_checks(config)
     assert len(findings) >= 1
     assert any(f.details.get("change") == "column_added" for f in findings)
@@ -158,12 +171,13 @@ def test_volume_anomaly_detection_e2e(tmp_path, monkeypatch):
         raw.close()
         take_snapshot(config)
 
-    # Spike to 10000 rows
+    # Spike to 10000 rows and take snapshot
     raw = duckdb.connect(str(db_path))
     raw.execute("DELETE FROM t")
     for j in range(10000):
         raw.execute(f"INSERT INTO t VALUES ({j})")
     raw.close()
+    take_snapshot(config)
 
     findings, _dbt, _cost = run_checks(config)
     volume_findings = [f for f in findings if f.check_type == "volume"]
@@ -193,6 +207,8 @@ def test_exit_codes(tmp_path, monkeypatch):
 
     monkeypatch.chdir(tmp_path)
 
+    # Take 2 snapshots with no changes between them
+    take_snapshot(config)
     take_snapshot(config)
     findings, _dbt, _cost = run_checks(config)
     assert findings == []  # exit code 0 case

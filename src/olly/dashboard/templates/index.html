@@ -21,6 +21,23 @@
     {% endif %}
 </div>
 
+{% if findings_by_connection|length > 1 %}
+<section>
+    <h2>Findings by Connection</h2>
+    <div class="stats-row">
+        {% for conn, (errors, warnings) in findings_by_connection.items() %}
+        <a href="/findings?connection={{ conn }}" class="stat-card stat-card-link">
+            <div class="stat-label">{{ conn }}</div>
+            <div class="check-counts">
+                {% if errors %}<span class="check-count check-count-error">{{ errors }} error{{ "s" if errors != 1 else "" }}</span>{% endif %}
+                {% if warnings %}<span class="check-count check-count-warning">{{ warnings }} warning{{ "s" if warnings != 1 else "" }}</span>{% endif %}
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+</section>
+{% endif %}
+
 {% if check_breakdown %}
 <section>
     <h2>By Check Type</h2>
@@ -35,6 +52,22 @@
         </div>
         {% endfor %}
     </div>
+</section>
+{% endif %}
+
+{% if critical_findings %}
+<section>
+    <h2>Recent Critical Issues</h2>
+    {% for finding in critical_findings %}
+    <div class="stat-card" style="margin-bottom: 0.5rem;">
+        <span class="badge badge-{{ finding.severity }}">{{ finding.severity }}</span>
+        <a href="/table/{{ finding.schema_name }}/{{ finding.table_name }}">
+            {{ finding.schema_name }}.{{ finding.table_name }}
+        </a>
+        <p style="margin-top: 0.25rem; font-size: 0.9rem;">{{ finding.description }}</p>
+    </div>
+    {% endfor %}
+    <a href="/findings?severity=error" class="btn-view-all">View all issues</a>
 </section>
 {% endif %}
 

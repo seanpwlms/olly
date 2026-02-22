@@ -7,18 +7,14 @@ from unittest.mock import MagicMock, patch
 from urllib.error import URLError
 
 from olly.config import SlackConfig
-from olly.models import DbtFinding, Finding
+from olly.models import DbtFinding
 from olly.slack import _MAX_FINDINGS, build_slack_payload, send_slack_alert
+from conftest import make_finding
 
 
 def _finding(severity="error", check_type="schema", table="orders"):
-    return Finding(
-        check_type=check_type,
-        severity=severity,
-        schema_name="main",
-        table_name=table,
-        description="Test finding",
-    )
+    """Wrapper for backward compatibility with existing tests."""
+    return make_finding(check_type=check_type, severity=severity, table_name=table)
 
 
 def _dbt_finding(severity="error"):

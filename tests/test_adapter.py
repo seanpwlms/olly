@@ -70,40 +70,63 @@ def test_fetch_row_counts(olly_config):
 
 
 def test_fetch_max_timestamp(olly_config):
+    """Max timestamp should be recent (within last 3 days from test data)."""
+    from datetime import datetime, timedelta
+
     conn = olly_config.connections["primary"].connection
     backend = connect_typed(conn)
     ts = backend.fetch_max_timestamp("main", "orders", "updated_at")
     assert ts is not None
-    assert ts.year == 2026
+    # Test data uses relative timestamps (now, 1 day ago, 2 days ago)
+    # So max timestamp should be within last 3 days
+    assert ts > datetime.now() - timedelta(days=3)
+    assert ts <= datetime.now() + timedelta(minutes=5)  # Allow small clock drift
 
 
 def test_fetch_count_with_where(olly_config):
+    """Test fetch_count with WHERE clause filtering."""
+    from datetime import datetime, timedelta
+
     conn = olly_config.connections["primary"].connection
     backend = connect_typed(conn)
+    # Test data has 3 orders: now, 1 day ago, 2 days ago
+    # Filter for orders within last 1.5 days (should get 2)
+    cutoff = (datetime.now() - timedelta(days=1, hours=12)).strftime('%Y-%m-%d %H:%M:%S')
     count = backend.fetch_count(
-        "main", "orders", "amount >= 49.5 AND updated_at >= '2026-02-16 00:00:00'"
+        "main", "orders", f"amount >= 49.5 AND updated_at >= '{cutoff}'"
     )
     assert count == 2
 
 
 def test_fetch_count_distinct(olly_config):
+    """Test COUNT(DISTINCT) with relative date filter."""
+    from datetime import datetime, timedelta
+
     conn = olly_config.connections["primary"].connection
     backend = connect_typed(conn)
+    # Test data has orders from last 3 days - get all of them
+    start = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
+    end = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
     count = backend.fetch_count_distinct(
         "main",
         "orders",
         "customer_id",
-        "updated_at >= '2026-02-15 00:00:00' AND updated_at <= '2026-02-16 23:59:59'",
+        f"updated_at >= '{start}' AND updated_at <= '{end}'",
     )
     assert count == 2
 
 
 def test_fetch_hash(olly_config):
+    """Test hash calculation is deterministic with relative dates."""
+    from datetime import datetime, timedelta
+
     conn = olly_config.connections["primary"].connection
     backend = connect_typed(conn)
-    where_sql = (
-        "updated_at >= '2026-02-15 00:00:00' AND updated_at <= '2026-02-16 23:59:59'"
-    )
+    # Use a filter that captures all test data
+    start = (datetime.now() - timedelta(days=3)).strftime('%Y-%m-%d %H:%M:%S')
+    end = (datetime.now() + timedelta(hours=1)).strftime('%Y-%m-%d %H:%M:%S')
+    where_sql = f"updated_at >= '{start}' AND updated_at <= '{end}'"
+
     first = backend.fetch_hash(
         "main",
         "orders",

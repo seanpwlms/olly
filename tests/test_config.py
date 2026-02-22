@@ -17,23 +17,11 @@ from olly.config import (
     write_config,
 )
 from olly.config_ops import validate_config
+from conftest import make_config
 
 
-def _make_config(
-    connection: ConnectionConfig | None = None,
-    selection: Selection | None = None,
-    overrides: list[Override] | None = None,
-    **kwargs,
-) -> OllyConfig:
-    """Helper to build an OllyConfig with a single 'primary' connection."""
-    conn = connection or ConnectionConfig(type="duckdb", path="x.duckdb")
-    nc = NamedConnection(
-        name="primary",
-        connection=conn,
-        selection=selection or Selection(),
-        overrides=overrides or [],
-    )
-    return OllyConfig(connections={"primary": nc}, **kwargs)
+# Alias for backward compatibility
+_make_config = make_config
 
 
 def test_write_and_load_roundtrip(tmp_path):

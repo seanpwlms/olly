@@ -8,46 +8,30 @@ from olly.checks.cost import check_cost, summarize_costs, _detect_cost_anomalies
 from olly.config import ConnectionConfig, CostConfig, NamedConnection, OllyConfig, Selection
 from olly.models import CostRecord
 from olly.state import StateDB
-
-
-def _record(schema="main", table="orders", cost=10.0, user="user@example.com"):
-    return CostRecord(
-        schema_name=schema,
-        table_name=table,
-        user_email=user,
-        total_bytes_billed=1_000_000,
-        estimated_cost_usd=cost,
-        query_count=5,
-    )
+from conftest import make_cost_record, FakeAdapter
 
 
 def test_check_cost_success(tmp_path):
     """Adapter with fetch_query_costs returns records."""
-    expected = [_record()]
-
-    class FakeAdapter:
-        def fetch_query_costs(self, schemas, lookback_days, region, price_per_tb_usd):
-            return expected
+    expected = [make_cost_record()]
+    adapter = FakeAdapter(cost_records=expected)
 
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        records, findings = check_cost(cast(Any, FakeAdapter()), ["main"], CostConfig(), db)
+        records, findings = check_cost(cast(Any, adapter), ["main"], CostConfig(), db)
     assert records == expected
     assert findings == []
 
 
 def test_check_cost_exception(tmp_path):
     """Adapter that raises returns empty results."""
-
-    class FakeAdapter:
-        def fetch_query_costs(self, schemas, lookback_days, region, price_per_tb_usd):
-            raise RuntimeError("fail")
+    adapter = FakeAdapter(raise_on_fetch=True)
 
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        records, findings = check_cost(cast(Any, FakeAdapter()), ["main"], CostConfig(), db)
+        records, findings = check_cost(cast(Any, adapter), ["main"], CostConfig(), db)
     assert records == []
     assert findings == []
 
@@ -60,10 +44,10 @@ def test_detect_cost_anomalies_spike(tmp_path):
         # Seed historical cost data: 5 snapshots with slight variation
         for i, cost in enumerate([9.0, 10.0, 11.0, 10.0, 10.0]):
             sid = db.create_snapshot()
-            db.store_cost_data(sid, [_record(cost=cost)])
+            db.store_cost_data(sid, [make_cost_record(cost=cost)])
 
         # Current cost is way above average
-        current = [_record(cost=100.0)]
+        current = [make_cost_record(cost=100.0)]
         findings = _detect_cost_anomalies(current, db, spike_threshold=2.0)
     assert len(findings) == 1
     assert "spike" in findings[0].description.lower()
@@ -76,9 +60,9 @@ def test_detect_cost_anomalies_no_spike(tmp_path):
         db.init_db()
         for cost in [9.0, 10.0, 11.0, 10.0, 10.0]:
             sid = db.create_snapshot()
-            db.store_cost_data(sid, [_record(cost=cost)])
+            db.store_cost_data(sid, [make_cost_record(cost=cost)])
 
-        current = [_record(cost=10.5)]
+        current = [make_cost_record(cost=10.5)]
         findings = _detect_cost_anomalies(current, db, spike_threshold=3.0)
     assert findings == []
 
@@ -98,8 +82,8 @@ def test_detect_cost_anomalies_insufficient_history(tmp_path):
     with StateDB(state_path) as db:
         db.init_db()
         sid = db.create_snapshot()
-        db.store_cost_data(sid, [_record(cost=10.0)])
-        current = [_record(cost=100.0)]
+        db.store_cost_data(sid, [make_cost_record(cost=10.0)])
+        current = [make_cost_record(cost=100.0)]
         findings = _detect_cost_anomalies(current, db, spike_threshold=2.0)
     assert findings == []
 
@@ -111,8 +95,8 @@ def test_detect_cost_anomalies_zero_stddev(tmp_path):
         db.init_db()
         for _ in range(5):
             sid = db.create_snapshot()
-            db.store_cost_data(sid, [_record(cost=10.0)])
-        current = [_record(cost=10.0)]
+            db.store_cost_data(sid, [make_cost_record(cost=10.0)])
+        current = [make_cost_record(cost=10.0)]
         findings = _detect_cost_anomalies(current, db, spike_threshold=3.0)
     assert len(findings) == 0
 
@@ -120,9 +104,9 @@ def test_detect_cost_anomalies_zero_stddev(tmp_path):
 def test_summarize_costs():
     """Summarizes costs by table and user."""
     records = [
-        _record(schema="main", table="orders", cost=10.0),
-        _record(schema="main", table="orders", cost=5.0),
-        _record(schema="main", table="customers", cost=3.0),
+        make_cost_record(schema="main", table="orders", cost=10.0),
+        make_cost_record(schema="main", table="orders", cost=5.0),
+        make_cost_record(schema="main", table="customers", cost=3.0),
     ]
     summary = summarize_costs(records)
     assert summary["total_cost_usd"] == 18.0
@@ -140,7 +124,7 @@ def test_state_save_and_get_cost_history(tmp_path):
     with StateDB(state_path) as db:
         db.init_db()
         sid = db.create_snapshot()
-        records = [_record(cost=25.0), _record(table="customers", cost=15.0)]
+        records = [make_cost_record(cost=25.0), make_cost_record(table="customers", cost=15.0)]
         db.store_cost_data(sid, records)
 
         history = db.get_cost_history(depth=10)
@@ -154,7 +138,7 @@ def test_state_get_cost_records_for_snapshot(tmp_path):
     with StateDB(state_path) as db:
         db.init_db()
         sid = db.create_snapshot()
-        db.store_cost_data(sid, [_record(cost=7.5)])
+        db.store_cost_data(sid, [make_cost_record(cost=7.5)])
 
         loaded = db.get_cost_records_for_snapshot(sid)
     assert len(loaded) == 1
@@ -234,21 +218,23 @@ def test_config_write_cost(tmp_path):
 def test_fetch_query_costs_adapter():
     """Test that fetch_query_costs builds correct SQL and parses results."""
 
+    class MockRow:
+        def __init__(self, vals):
+            self._vals = vals
+
+        def values(self):
+            return self._vals
+
     class MockConnection:
         def __init__(self):
             self.last_sql: str | None = None
 
         def raw_sql(self, sql):
             self.last_sql = sql
-
-            class Result:
-                def fetchall(self_inner):
-                    return [
-                        ("analytics", "events", "user@co.com", 2199023255552, 5),
-                        ("analytics", "users", "admin@co.com", 549755813888, 2),
-                    ]
-
-            return Result()
+            return [
+                MockRow(("analytics", "events", "user@co.com", 2199023255552, 5)),
+                MockRow(("analytics", "users", "admin@co.com", 549755813888, 2)),
+            ]
 
     from olly.adapters.bigquery import BigQueryAdapter
 
@@ -286,7 +272,7 @@ def test_fetch_query_costs_empty_schemas():
 def test_summarize_costs_top_limits():
     """Top tables limited to 10, top users limited to 5."""
     records = [
-        _make_record(table=f"table_{i}", cost=float(i), user=f"user_{i}@co.com")
+        _makemake_cost_record(table=f"table_{i}", cost=float(i), user=f"user_{i}@co.com")
         for i in range(15)
     ]
     summary = summarize_costs(records)
@@ -294,7 +280,7 @@ def test_summarize_costs_top_limits():
     assert len(summary["top_users"]) == 5
 
 
-def _make_record(
+def _makemake_cost_record(
     schema: str = "main",
     table: str = "orders",
     user: str = "user@example.com",

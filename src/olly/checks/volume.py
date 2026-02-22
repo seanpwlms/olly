@@ -5,14 +5,14 @@ import statistics
 
 from olly.config import Settings
 from olly.models import Finding, VolumeRecord
-from olly.state import StateStore
+from olly.state import BaseStateStore
 
 logger = logging.getLogger(__name__)
 
 
 def check_volume(
     current: list[VolumeRecord],
-    state_db: StateStore,
+    state_db: BaseStateStore,
     settings: Settings,
     thresholds: dict[tuple[str, str], float] | None = None,
     connection_name: str = "",
@@ -42,10 +42,17 @@ def check_volume(
             vol.schema_name, vol.table_name, settings.history_depth,
             connection_name=connection_name,
         )
-        if len(history) < min_history:
+        # Exclude the latest snapshot from history since current is the latest snapshot
+        # We want to compare current against the historical baseline, not including itself
+        if len(history) > 0 and history[0] == vol.row_count:
+            baseline_history = history[1:]
+        else:
+            baseline_history = history
+
+        if len(baseline_history) < min_history:
             continue
 
-        zscore = _compute_zscore(vol.row_count, history)
+        zscore = _compute_zscore(vol.row_count, baseline_history)
         if zscore is not None and abs(zscore) > threshold:
             direction = "increase" if zscore > 0 else "decrease"
             findings.append(
@@ -63,9 +70,9 @@ def check_volume(
                         "current_count": vol.row_count,
                         "z_score": round(zscore, 2),
                         "threshold": threshold,
-                        "history_mean": round(statistics.mean(history), 2),
-                        "history_stdev": round(statistics.stdev(history), 2),
-                        "history_depth": len(history),
+                        "history_mean": round(statistics.mean(baseline_history), 2),
+                        "history_stdev": round(statistics.stdev(baseline_history), 2),
+                        "history_depth": len(baseline_history),
                     },
                 )
             )

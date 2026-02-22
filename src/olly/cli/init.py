@@ -67,7 +67,7 @@ def run_init() -> None:
     console.print(f"\n[green]Wrote {config_path}[/green]")
 
     # Initialize state store
-    with open_state(config, adapter, conn.type if adapter else ""):
+    with open_state(config, adapter):
         pass  # initialization happens in constructor
     if config.settings.state_schema:
         console.print(
