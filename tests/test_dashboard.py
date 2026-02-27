@@ -5,7 +5,6 @@ from contextlib import contextmanager
 import pytest
 from fastapi.testclient import TestClient
 
-from olly.dashboard.charts import cost_by_table_chart, volume_trend_chart
 from olly.dashboard.data import (
     filter_findings,
     get_critical_findings,
@@ -280,20 +279,7 @@ def test_get_schema_diff_single_snapshot(tmp_path):
     assert diff is None
 
 
-# ── charts.py tests ──
-
-
-def test_volume_trend_chart():
-    ts = [
-        {"snapshot": "2026-01-01T00:00:00", "row_count": 100},
-        {"snapshot": "2026-01-02T00:00:00", "row_count": 110},
-    ]
-    spec = volume_trend_chart(ts)
-    assert spec["data"]["values"] == ts
-    assert spec["mark"]["type"] == "line"
-
-
-# ── routes tests ──
+# ── API routes tests ──
 
 
 @pytest.fixture
@@ -335,9 +321,6 @@ def dashboard_client(tmp_path, monkeypatch):
     write_findings_json(test_findings, findings_path)
 
     # Monkeypatch paths and _state_db to use tmp_path state.
-    # _state_db() now calls load_config() + connect_typed() + open_state() internally,
-    # so we replace the whole function to bypass config/adapter setup.
-    # Save the original function before monkeypatching
     from olly.state import get_olly_dir as original_get_olly_dir
     test_olly_dir = original_get_olly_dir(tmp_path)
 
@@ -357,8 +340,9 @@ def dashboard_client(tmp_path, monkeypatch):
     def mock_get_all_connections():
         return ["test_connection"]
 
-    monkeypatch.setattr("olly.dashboard.routes._state_db", mock_state_db)
-    monkeypatch.setattr("olly.dashboard.routes._get_current_connection", mock_get_current_connection)
+    monkeypatch.setattr("olly.dashboard.api_routes._state_db", mock_state_db)
+    monkeypatch.setattr("olly.dashboard.api_routes._get_current_connection", mock_get_current_connection)
+    monkeypatch.setattr("olly.dashboard.api_routes._get_all_connections", mock_get_all_connections)
     monkeypatch.setattr("olly.dashboard.data.get_all_connections", mock_get_all_connections)
 
     from olly.dashboard.app import app
@@ -366,84 +350,102 @@ def dashboard_client(tmp_path, monkeypatch):
     return TestClient(app)
 
 
-def test_index_page(dashboard_client):
-    resp = dashboard_client.get("/")
+def test_api_overview(dashboard_client):
+    resp = dashboard_client.get("/api/overview")
     assert resp.status_code == 200
-    assert "Errors" in resp.text
-    assert "orders" in resp.text
-    # Check type breakdown tiles
-    assert "By Check Type" in resp.text
-    assert "schema" in resp.text.lower()
-    assert "1 error" in resp.text
+    data = resp.json()
+    assert data["stats"]["error_count"] == 1
+    assert data["stats"]["warning_count"] == 1
+    assert "top_tables" in data
+    assert "findings_trend" in data
+    assert isinstance(data["findings_by_connection"], dict)
 
 
 def test_api_findings_no_filter(dashboard_client):
     resp = dashboard_client.get("/api/findings")
     assert resp.status_code == 200
-    assert "orders" in resp.text
+    data = resp.json()
+    assert "orders" in str(data["findings"])
 
 
 def test_api_findings_filter_check_type(dashboard_client):
     resp = dashboard_client.get("/api/findings?check_type=schema")
     assert resp.status_code == 200
-    assert "Column added" in resp.text
-    assert "Z-score" not in resp.text
+    data = resp.json()
+    assert all(f["check_type"] == "schema" for f in data["findings"])
 
 
 def test_api_findings_filter_severity(dashboard_client):
     resp = dashboard_client.get("/api/findings?severity=warning")
     assert resp.status_code == 200
-    assert "Z-score" in resp.text
-    assert "Column added" not in resp.text
+    data = resp.json()
+    assert all(f["severity"] == "warning" for f in data["findings"])
 
 
-def test_table_detail(dashboard_client):
-    resp = dashboard_client.get("/table/main/orders")
+def test_api_table_detail(dashboard_client):
+    resp = dashboard_client.get("/api/table/main/orders")
     assert resp.status_code == 200
-    assert "main.orders" in resp.text
-    assert "INTEGER" in resp.text
-    assert "Row Count" in resp.text
-    assert "100" in resp.text
-    assert "First seen" in resp.text
+    data = resp.json()
+    assert data["table_info"]["table_name"] == "orders"
+    assert data["volume_stats"]["current"] == 100
 
 
-def test_tables_page(dashboard_client):
-    resp = dashboard_client.get("/tables")
+def test_api_tables(dashboard_client):
+    resp = dashboard_client.get("/api/tables")
     assert resp.status_code == 200
-    assert "orders" in resp.text
-    assert "100" in resp.text
+    data = resp.json()
+    assert any(t["table"] == "orders" for t in data["tables"])
+    assert data["total"] >= 1
 
 
-def test_tables_search(dashboard_client):
-    resp = dashboard_client.get("/tables?search=orders")
+def test_api_tables_search(dashboard_client):
+    resp = dashboard_client.get("/api/tables?search=orders")
     assert resp.status_code == 200
-    assert "orders" in resp.text
+    data = resp.json()
+    assert any(t["table"] == "orders" for t in data["tables"])
 
 
-def test_tables_search_no_match(dashboard_client):
-    resp = dashboard_client.get("/tables?search=zzzzz")
+def test_api_tables_search_no_match(dashboard_client):
+    resp = dashboard_client.get("/api/tables?search=zzzzz")
     assert resp.status_code == 200
-    assert "No tables found" in resp.text
+    data = resp.json()
+    assert len(data["tables"]) == 0
 
 
-def test_tables_sort(dashboard_client):
-    resp = dashboard_client.get("/tables?sort=row_count&order=desc")
+def test_api_tables_sort(dashboard_client):
+    resp = dashboard_client.get("/api/tables?sort=row_count&order=desc")
     assert resp.status_code == 200
-    assert "orders" in resp.text
+    data = resp.json()
+    assert any(t["table"] == "orders" for t in data["tables"])
 
 
-def test_tables_htmx_returns_partial(dashboard_client):
-    resp = dashboard_client.get("/tables", headers={"HX-Request": "true"})
+def test_api_table_detail_not_found_graceful(dashboard_client):
+    resp = dashboard_client.get("/api/table/main/nonexistent")
     assert resp.status_code == 200
-    # Partial should not include full page layout
-    assert "<!DOCTYPE" not in resp.text
-    assert "orders" in resp.text
+    data = resp.json()
+    assert data["table_info"] is None
 
 
-def test_table_detail_not_found_graceful(dashboard_client):
-    resp = dashboard_client.get("/table/main/nonexistent")
+def test_api_history(dashboard_client):
+    resp = dashboard_client.get("/api/history")
     assert resp.status_code == 200
-    assert "nonexistent" in resp.text
+    data = resp.json()
+    assert data["days"] == 30
+
+
+def test_api_connections(dashboard_client):
+    resp = dashboard_client.get("/api/connections")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "test_connection" in data["connections"]
+
+
+def test_api_dbt(dashboard_client):
+    resp = dashboard_client.get("/api/dbt")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "dbt_stats" in data
+    assert "dbt_findings" in data
 
 
 # ── usage page tests ──
@@ -508,16 +510,6 @@ def test_load_cost_summary_missing(tmp_path):
     write_findings_json([], path)
     summary = load_cost_summary(path)
     assert summary is None
-
-
-def test_cost_by_table_chart():
-    top_tables = [
-        {"schema": "main", "table": "orders", "cost_usd": 10.50},
-        {"schema": "main", "table": "users", "cost_usd": 5.25},
-    ]
-    spec = cost_by_table_chart(top_tables)
-    assert spec["mark"]["type"] == "bar"
-    assert len(spec["data"]["values"]) == 2
 
 
 def test_get_findings_stats():
@@ -604,15 +596,16 @@ def test_get_findings_by_table():
     assert by_table[("main", "customers")] == (1, 0)
 
 
-def test_usage_page_empty(dashboard_client):
-    resp = dashboard_client.get("/usage")
+def test_api_usage_empty(dashboard_client):
+    resp = dashboard_client.get("/api/usage")
     assert resp.status_code == 200
-    assert "Usage" in resp.text
-    assert "No unused or stale tables" in resp.text
+    data = resp.json()
+    assert "stats" in data
+    assert data["stats"]["unused_count"] == 0
 
 
-def test_usage_page_with_findings(tmp_path, monkeypatch):
-    """Usage page with usage findings and cost data."""
+def test_api_usage_with_findings(tmp_path, monkeypatch):
+    """Usage API with usage findings and cost data."""
     state_db_path = get_olly_dir(tmp_path) / "state.db"
     state_db_path.parent.mkdir(parents=True)
     state_db = StateDB(db_path=state_db_path)
@@ -669,19 +662,18 @@ def test_usage_page_with_findings(tmp_path, monkeypatch):
     def mock_get_all_connections():
         return ["test_connection"]
 
-    monkeypatch.setattr("olly.dashboard.routes._state_db", mock_state_db)
-    monkeypatch.setattr("olly.dashboard.routes._get_current_connection", mock_get_current_connection)
+    monkeypatch.setattr("olly.dashboard.api_routes._state_db", mock_state_db)
+    monkeypatch.setattr("olly.dashboard.api_routes._get_current_connection", mock_get_current_connection)
+    monkeypatch.setattr("olly.dashboard.api_routes._get_all_connections", mock_get_all_connections)
     monkeypatch.setattr("olly.dashboard.data.get_all_connections", mock_get_all_connections)
 
     from olly.dashboard.app import app
 
     client = TestClient(app)
-    resp = client.get("/usage")
+    resp = client.get("/api/usage")
     assert resp.status_code == 200
-    assert "old_table" in resp.text
-    assert "stale_table" in resp.text
-    assert "unused" in resp.text
-    assert "stale" in resp.text
-    assert "$33.50" in resp.text
-    assert "alice@co.com" in resp.text
-    assert "bob@co.com" in resp.text
+    data = resp.json()
+    assert data["stats"]["unused_count"] == 1
+    assert data["stats"]["stale_count"] == 1
+    assert data["cost_summary"]["total_cost_usd"] == 33.50
+    assert any("alice@co.com" in u["user"] for u in data["cost_summary"]["top_users"])

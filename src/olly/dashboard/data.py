@@ -501,6 +501,63 @@ def get_critical_findings(findings: list[Finding], limit: int = 5) -> list[Findi
     return errors[:limit]
 
 
+@dataclass
+class FindingsTrendPoint:
+    timestamp: str
+    errors: int
+    warnings: int
+
+
+def get_findings_trend(
+    state_db: BaseStateStore, limit: int = 20
+) -> list[FindingsTrendPoint]:
+    """Return error/warning counts per day, using the latest run each day."""
+    rows = state_db._query(  # noqa: SLF001
+        "SELECT day, errors, warnings FROM ("  # noqa: S608
+        "  SELECT SUBSTR(created_at, 1, 10) AS day, "
+        "  SUM(CASE WHEN severity = 'error' THEN 1 ELSE 0 END) AS errors, "
+        "  SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) AS warnings, "
+        "  ROW_NUMBER() OVER ("
+        "    PARTITION BY SUBSTR(created_at, 1, 10) "
+        "    ORDER BY created_at DESC"
+        "  ) AS rn "
+        f" FROM {state_db._table('findings')} "  # noqa: SLF001
+        "  GROUP BY created_at"
+        ") WHERE rn = 1 "
+        "ORDER BY day DESC LIMIT :limit",
+        {"limit": limit},
+    )
+    return [
+        FindingsTrendPoint(timestamp=r[0], errors=r[1], warnings=r[2])
+        for r in reversed(rows)
+    ]
+
+
+def get_previous_stats(
+    state_db: BaseStateStore,
+) -> tuple[int, int] | None:
+    """Return (errors, warnings) from the second-most-recent check run, or None."""
+    rows = state_db._query(  # noqa: SLF001
+        "SELECT DISTINCT created_at "  # noqa: S608
+        f"FROM {state_db._table('findings')} "  # noqa: SLF001
+        "ORDER BY created_at DESC LIMIT 2",
+    )
+    if len(rows) < 2:
+        return None
+    prev_time = rows[1][0]
+    row = state_db._query_one(  # noqa: SLF001
+        "SELECT "  # noqa: S608
+        "SUM(CASE WHEN severity = 'error' THEN 1 ELSE 0 END), "
+        "SUM(CASE WHEN severity = 'warning' THEN 1 ELSE 0 END) "
+        f"FROM {state_db._table('findings')} "  # noqa: SLF001
+        "WHERE created_at = :created_at",
+        {"created_at": prev_time},
+    )
+    if row is None:
+        return None
+    return (row[0], row[1])
+
+
 def get_findings_by_table(findings: list[Finding]) -> dict[tuple[str, str], tuple[int, int]]:
     """Group findings by (schema, table)."""
     result = {}
