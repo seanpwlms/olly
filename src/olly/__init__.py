@@ -133,6 +133,21 @@ def debug(*, connection: str | None = None) -> None:
     run_debug(connection_name=connection)
 
 
+@app.command
+def clean(*, yes: bool = False) -> None:
+    """Delete the local state database.
+
+    Removes the SQLite state database for the current project. Does
+    nothing when state is stored in the warehouse.
+
+    Args:
+        yes: Skip confirmation prompt.
+    """
+    from olly.cli.clean import run_clean
+
+    run_clean(yes=yes)
+
+
 def main() -> None:
     """Entry point for the ``olly`` CLI."""
     app()

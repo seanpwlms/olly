@@ -97,7 +97,8 @@ def test_all_passing(tmp_path: Path) -> None:
         ],
     )
     findings = check_dbt(rr, DbtConfig())
-    assert findings == []
+    assert len(findings) == 2
+    assert all(f.severity == "pass" for f in findings)
 
 
 def test_missing_file(tmp_path: Path) -> None:
@@ -138,6 +139,7 @@ def test_include_skipped_false(tmp_path: Path) -> None:
         ],
     )
     findings = check_dbt(rr, DbtConfig(include_skipped=False))
+    # Skipped nodes are excluded (not even as pass) when include_skipped is false
     assert findings == []
 
 
@@ -208,7 +210,8 @@ def test_mixed_results(tmp_path: Path) -> None:
         ],
     )
     findings = check_dbt(rr, DbtConfig())
-    assert len(findings) == 3
+    assert len(findings) == 5
     severities = [f.severity for f in findings]
     assert severities.count("error") == 2
     assert severities.count("warning") == 1
+    assert severities.count("pass") == 2

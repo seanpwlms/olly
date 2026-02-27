@@ -41,10 +41,9 @@ def test_detect_cost_anomalies_spike(tmp_path):
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        # Seed historical cost data: 5 snapshots with slight variation
-        for i, cost in enumerate([9.0, 10.0, 11.0, 10.0, 10.0]):
-            sid = db.create_snapshot()
-            db.store_cost_data(sid, [make_cost_record(cost=cost)])
+        # Seed historical cost data: 5 runs with slight variation
+        for cost in [9.0, 10.0, 11.0, 10.0, 10.0]:
+            db.store_cost_data([make_cost_record(cost=cost)])
 
         # Current cost is way above average
         current = [make_cost_record(cost=100.0)]
@@ -59,8 +58,7 @@ def test_detect_cost_anomalies_no_spike(tmp_path):
     with StateDB(state_path) as db:
         db.init_db()
         for cost in [9.0, 10.0, 11.0, 10.0, 10.0]:
-            sid = db.create_snapshot()
-            db.store_cost_data(sid, [make_cost_record(cost=cost)])
+            db.store_cost_data([make_cost_record(cost=cost)])
 
         current = [make_cost_record(cost=10.5)]
         findings = _detect_cost_anomalies(current, db, spike_threshold=3.0)
@@ -81,8 +79,7 @@ def test_detect_cost_anomalies_insufficient_history(tmp_path):
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        sid = db.create_snapshot()
-        db.store_cost_data(sid, [make_cost_record(cost=10.0)])
+        db.store_cost_data([make_cost_record(cost=10.0)])
         current = [make_cost_record(cost=100.0)]
         findings = _detect_cost_anomalies(current, db, spike_threshold=2.0)
     assert findings == []
@@ -94,8 +91,7 @@ def test_detect_cost_anomalies_zero_stddev(tmp_path):
     with StateDB(state_path) as db:
         db.init_db()
         for _ in range(5):
-            sid = db.create_snapshot()
-            db.store_cost_data(sid, [make_cost_record(cost=10.0)])
+            db.store_cost_data([make_cost_record(cost=10.0)])
         current = [make_cost_record(cost=10.0)]
         findings = _detect_cost_anomalies(current, db, spike_threshold=3.0)
     assert len(findings) == 0
@@ -123,37 +119,39 @@ def test_state_save_and_get_cost_history(tmp_path):
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        sid = db.create_snapshot()
         records = [make_cost_record(cost=25.0), make_cost_record(table="customers", cost=15.0)]
-        db.store_cost_data(sid, records)
+        db.store_cost_data(records)
 
         history = db.get_cost_history(depth=10)
     assert len(history) == 1
     assert history[0][1] == 40.0  # 25 + 15
 
 
-def test_state_get_cost_records_for_snapshot(tmp_path):
-    """Cost records can be retrieved for a specific snapshot."""
+def test_state_get_latest_cost(tmp_path):
+    """Cost records can be retrieved via get_latest_cost."""
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        sid = db.create_snapshot()
-        db.store_cost_data(sid, [make_cost_record(cost=7.5)])
+        db.store_cost_data([make_cost_record(cost=7.5)])
 
-        loaded = db.get_cost_records_for_snapshot(sid)
+        loaded = db.get_latest_cost()
     assert len(loaded) == 1
     assert loaded[0].estimated_cost_usd == 7.5
     assert loaded[0].schema_name == "main"
 
 
-def test_state_db_creates_cost_table(tmp_path):
-    """Verify that init_db creates the cost_snapshot table."""
+def test_state_db_creates_cost_tables(tmp_path):
+    """Verify that init_db creates cost_runs and cost_records tables."""
     with StateDB(db_path=tmp_path / "state.db") as db:
         db.init_db()
-        tables = db.conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='cost_snapshot'"
-        ).fetchall()
-        assert len(tables) == 1
+        tables = {
+            r[0]
+            for r in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "cost_runs" in tables
+        assert "cost_records" in tables
 
 
 # --- Config parsing tests ---

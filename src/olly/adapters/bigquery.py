@@ -234,10 +234,12 @@ class BigQueryAdapter(BaseAdapter):
                     metadata_by_schema[ti.schema_name] = metadata
                 row_count = metadata.get(ti.table_name, {}).get("row_count")
                 if row_count is None:
-                    raise RuntimeError(
-                        "Missing row count for "
-                        f"{ti.schema_name}.{ti.table_name} in INFORMATION_SCHEMA"
+                    logger.error(
+                        "Missing row count for %s.%s in INFORMATION_SCHEMA, skipping",
+                        ti.schema_name,
+                        ti.table_name,
                     )
+                    continue
                 records.append(
                     VolumeRecord(
                         schema_name=ti.schema_name,

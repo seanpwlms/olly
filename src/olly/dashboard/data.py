@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from olly.config import load_config
@@ -117,10 +118,24 @@ def load_dbt_findings(findings_path: Path | None = None) -> list[DbtFinding]:
     ]
 
 
+def load_findings_from_db(
+    state_db: BaseStateStore, connection_name: str | None = None
+) -> list[Finding]:
+    """Load findings from the most recent check run."""
+    return state_db.get_latest_findings(connection_name=connection_name)
+
+
+def load_dbt_findings_from_db(state_db: BaseStateStore) -> list[DbtFinding]:
+    """Load dbt findings from the most recent check run."""
+    return state_db.get_latest_dbt_findings()
+
+
 @dataclass
 class DbtStats:
     error_count: int
     warning_count: int
+    pass_count: int
+    total_count: int
 
 
 def get_dbt_stats(dbt_findings: list[DbtFinding]) -> DbtStats:
@@ -128,6 +143,8 @@ def get_dbt_stats(dbt_findings: list[DbtFinding]) -> DbtStats:
     return DbtStats(
         error_count=sum(1 for f in dbt_findings if f.severity == "error"),
         warning_count=sum(1 for f in dbt_findings if f.severity == "warning"),
+        pass_count=sum(1 for f in dbt_findings if f.severity == "pass"),
+        total_count=len(dbt_findings),
     )
 
 
@@ -164,17 +181,30 @@ def load_cost_summary(findings_path: Path | None = None) -> dict | None:
 
 def get_stats(
     findings: list[Finding],
-    generated_at: str | None,
-    state_db: BaseStateStore,
+    state_db_or_generated_at: BaseStateStore | str | None,
+    state_db_or_connection: BaseStateStore | str = "",
     connection_name: str = "",
 ) -> DashboardStats:
-    """Compute summary stats for the dashboard."""
-    tables = state_db.get_latest_schema(connection_name)
+    """Compute summary stats for the dashboard.
+
+    Supports two call signatures for backward compatibility:
+      - get_stats(findings, state_db, connection_name)
+      - get_stats(findings, generated_at, state_db, connection_name)  # legacy
+    """
+    if isinstance(state_db_or_generated_at, BaseStateStore):
+        state_db = state_db_or_generated_at
+        conn = state_db_or_connection if isinstance(state_db_or_connection, str) else ""
+    else:
+        assert isinstance(state_db_or_connection, BaseStateStore)
+        state_db = state_db_or_connection
+        conn = connection_name
+
+    tables = state_db.get_latest_schema(conn)
     return DashboardStats(
         error_count=sum(1 for f in findings if f.severity == "error"),
         warning_count=sum(1 for f in findings if f.severity == "warning"),
         tables_monitored=len(tables),
-        last_check_time=generated_at,
+        last_check_time=state_db.get_last_check_time(),
     )
 
 
@@ -376,11 +406,30 @@ def get_snapshot_history(
     state_db: BaseStateStore, days: int, connection_name: str = ""
 ) -> list[SnapshotInfo]:
     """Get recent snapshots with metadata."""
-    # Query snapshots table for recent entries
-    # This is a simplified implementation - we'll need to add this to BaseStateStore if not already present
-    # For now, we'll return an empty list and implement the actual query when we have access to the state DB
-    # TODO: Add get_recent_snapshots method to BaseStateStore
-    return []
+    cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=days)
+    ).strftime("%Y-%m-%dT%H:%M:%S")
+    rows = state_db._query(  # noqa: SLF001
+        f"SELECT s.id, s.created_at, s.connection_name, "  # noqa: S608
+        f"COUNT(DISTINCT ss.schema_name || '.' || ss.table_name) "
+        f"FROM {state_db._table('snapshots')} s "  # noqa: SLF001
+        f"LEFT JOIN {state_db._table('schema_snapshot')} ss "  # noqa: SLF001
+        f"ON ss.snapshot_id = s.id "
+        f"WHERE s.created_at >= :cutoff "
+        f"AND s.connection_name = :connection_name "
+        f"GROUP BY s.id "
+        f"ORDER BY s.id DESC",
+        {"cutoff": cutoff, "connection_name": connection_name},
+    )
+    return [
+        SnapshotInfo(
+            snapshot_id=r[0],
+            created_at=r[1],
+            connection_name=r[2],
+            table_count=r[3],
+        )
+        for r in rows
+    ]
 
 
 def get_cost_timeseries(
@@ -389,6 +438,45 @@ def get_cost_timeseries(
     """Get cost trend data for charting."""
     cost_history = state_db.get_cost_history(depth, connection_name)
     return [{"snapshot": ts, "cost": cost} for ts, cost in cost_history]
+
+
+def get_cost_daily_timeseries(
+    state_db: BaseStateStore, days: int, connection_name: str = ""
+) -> list[dict]:
+    """Get daily cost totals for charting."""
+    daily = state_db.get_cost_daily(days, connection_name)
+    return [{"day": day, "cost": cost} for day, cost in daily]
+
+
+@dataclass
+class LeastUsedTable:
+    schema_name: str
+    table_name: str
+    query_count: int
+    estimated_cost_usd: float
+
+
+def get_least_used_tables(
+    state_db: BaseStateStore, connection_name: str = "", limit: int = 10
+) -> list[LeastUsedTable]:
+    """Get the least-queried tables from the latest cost run."""
+    records = state_db.get_latest_cost(connection_name)
+    if not records:
+        return []
+    # Aggregate by table (records may have multiple users per table)
+    table_agg: dict[tuple[str, str], tuple[int, float]] = {}
+    for r in records:
+        key = (r.schema_name, r.table_name)
+        qc, cost = table_agg.get(key, (0, 0.0))
+        table_agg[key] = (qc + r.query_count, cost + r.estimated_cost_usd)
+    tables = [
+        LeastUsedTable(
+            schema_name=s, table_name=t, query_count=qc, estimated_cost_usd=cost
+        )
+        for (s, t), (qc, cost) in table_agg.items()
+    ]
+    tables.sort(key=lambda x: x.query_count)
+    return tables[:limit]
 
 
 def get_findings_by_connection(findings: list[Finding]) -> dict[str, tuple[int, int]]:

@@ -12,11 +12,20 @@
         <div class="stat-value">{{ dbt_stats.warning_count }}</div>
         <div class="stat-label">Warnings</div>
     </div>
+    <div class="stat-card stat-ok">
+        <div class="stat-value">{{ dbt_stats.pass_count }}</div>
+        <div class="stat-label">Passed</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ dbt_stats.total_count }}</div>
+        <div class="stat-label">Total</div>
+    </div>
 </div>
 
+{% set issue_findings = dbt_findings|selectattr("severity", "ne", "pass")|list %}
 <section>
     <div class="table-header">
-        <h2>Findings</h2>
+        <h2>Issues</h2>
         <div class="filters">
             <select hx-get="/api/dbt-findings" hx-target="#dbt-findings-body" hx-include=".filter-select" name="resource_type" class="filter-select">
                 <option value="">All types</option>
@@ -28,6 +37,7 @@
             </select>
         </div>
     </div>
+    {% if issue_findings %}
     <table class="findings-table">
         <thead>
             <tr>
@@ -43,5 +53,10 @@
             {% include "partials/dbt_findings_rows.html" %}
         </tbody>
     </table>
+    {% elif dbt_stats.total_count > 0 %}
+    <p class="empty-state">All {{ dbt_stats.total_count }} dbt nodes passed.</p>
+    {% else %}
+    <p class="empty-state">No dbt findings</p>
+    {% endif %}
 </section>
 {% endblock %}

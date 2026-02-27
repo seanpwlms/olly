@@ -37,8 +37,14 @@ CREATE TABLE IF NOT EXISTS volume_snapshot (
     row_count INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS cost_snapshot (
-    snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+CREATE TABLE IF NOT EXISTS cost_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    connection_name TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS cost_records (
+    cost_run_id INTEGER NOT NULL REFERENCES cost_runs(id),
     schema_name TEXT NOT NULL,
     table_name TEXT NOT NULL,
     user_email TEXT NOT NULL,
@@ -73,7 +79,7 @@ CREATE TABLE IF NOT EXISTS dbt_findings (
 
 CREATE INDEX IF NOT EXISTS idx_schema_snapshot_sid ON schema_snapshot(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_volume_snapshot_sid ON volume_snapshot(snapshot_id);
-CREATE INDEX IF NOT EXISTS idx_cost_snapshot_sid ON cost_snapshot(snapshot_id);
+CREATE INDEX IF NOT EXISTS idx_cost_records_run_id ON cost_records(cost_run_id);
 CREATE INDEX IF NOT EXISTS idx_findings_created_at ON findings(created_at);
 CREATE INDEX IF NOT EXISTS idx_findings_connection ON findings(connection_name);
 CREATE INDEX IF NOT EXISTS idx_dbt_findings_created_at ON dbt_findings(created_at);
@@ -188,3 +194,10 @@ class StateDB(BaseStateStore):
 
     def close(self) -> None:
         self.conn.close()
+
+    def clean(self) -> None:
+        """Delete the SQLite state database file."""
+        self.close()
+        if self.db_path.exists():
+            self.db_path.unlink()
+            logger.info("Deleted state database at %s", self.db_path)

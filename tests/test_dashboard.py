@@ -95,13 +95,15 @@ def test_get_stats(tmp_path):
         Finding("volume", "warning", "main", "customers", "desc"),
         Finding("volume", "error", "main", "customers", "desc2"),
     ]
-    stats = get_stats(findings, "2026-01-01T00:00:00", state_db)
+    state_db.store_findings(findings)
+    stats = get_stats(findings, state_db)
+    last_check_time = stats.last_check_time
     state_db.close()
 
     assert stats.error_count == 2
     assert stats.warning_count == 1
     assert stats.tables_monitored == 2
-    assert stats.last_check_time == "2026-01-01T00:00:00"
+    assert last_check_time is not None
 
 
 def test_get_volume_timeseries(tmp_path):
@@ -319,17 +321,18 @@ def dashboard_client(tmp_path, monkeypatch):
         ],
     )
     state_db.store_volume_data(snap_id, [VolumeRecord("main", "orders", 100)])
+
+    # Store findings in state DB (dashboard now reads from here)
+    test_findings = [
+        Finding("schema", "error", "main", "orders", "Column added: amount"),
+        Finding("volume", "warning", "main", "orders", "Z-score 3.5"),
+    ]
+    state_db.store_findings(test_findings)
     state_db.close()
 
-    # Write findings
+    # Write findings JSON (kept as optional CLI artifact)
     findings_path = get_olly_dir(tmp_path) / "findings.json"
-    write_findings_json(
-        [
-            Finding("schema", "error", "main", "orders", "Column added: amount"),
-            Finding("volume", "warning", "main", "orders", "Z-score 3.5"),
-        ],
-        findings_path,
-    )
+    write_findings_json(test_findings, findings_path)
 
     # Monkeypatch paths and _state_db to use tmp_path state.
     # _state_db() now calls load_config() + connect_typed() + open_state() internally,
@@ -614,6 +617,26 @@ def test_usage_page_with_findings(tmp_path, monkeypatch):
     state_db_path.parent.mkdir(parents=True)
     state_db = StateDB(db_path=state_db_path)
     state_db.init_db()
+
+    usage_findings = [
+        Finding(
+            "usage",
+            "error",
+            "main",
+            "old_table",
+            "Unused table",
+            details={"last_queried_at": None, "lookback_days": 90},
+        ),
+        Finding(
+            "usage",
+            "warning",
+            "main",
+            "stale_table",
+            "Stale table",
+            details={"last_queried_at": "2025-06-01T00:00:00", "days_unused": 45.0},
+        ),
+    ]
+    state_db.store_findings(usage_findings)
     state_db.close()
 
     findings_path = get_olly_dir(tmp_path) / "findings.json"
@@ -622,24 +645,7 @@ def test_usage_page_with_findings(tmp_path, monkeypatch):
         CostRecord("main", "users", "bob@co.com", 2000000, 8.50, 3),
     ]
     write_findings_json(
-        [
-            Finding(
-                "usage",
-                "error",
-                "main",
-                "old_table",
-                "Unused table",
-                details={"last_queried_at": None, "lookback_days": 90},
-            ),
-            Finding(
-                "usage",
-                "warning",
-                "main",
-                "stale_table",
-                "Stale table",
-                details={"last_queried_at": "2025-06-01T00:00:00", "days_unused": 45.0},
-            ),
-        ],
+        usage_findings,
         findings_path,
         cost_records=cost_records,
     )

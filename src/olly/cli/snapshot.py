@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any, Sequence
 
 from rich.console import Console
 
@@ -19,9 +20,21 @@ logger = logging.getLogger(__name__)
 
 console = Console()
 
+_MAX_TABLE_NAMES = 8
+
+
+def _table_list(tables: Sequence[Any], attr: str = "table_name") -> str:
+    """Format a short comma-separated list of table names, truncating if needed."""
+    names = [getattr(t, attr) for t in tables]
+    if len(names) <= _MAX_TABLE_NAMES:
+        return ", ".join(names)
+    return ", ".join(names[:_MAX_TABLE_NAMES]) + f", ... (+{len(names) - _MAX_TABLE_NAMES} more)"
+
 
 def take_snapshot(
-    config: OllyConfig, connection_name: str | None = None
+    config: OllyConfig,
+    connection_name: str | None = None,
+    progress_console: Console | None = None,
 ) -> list[tuple[str, int, int, int]]:
     """Capture the current warehouse state and store it in the state database.
 
@@ -29,22 +42,51 @@ def take_snapshot(
         config: Parsed Olly configuration.
         connection_name: Optional connection name to snapshot. When None, all
             connections are snapshotted.
+        progress_console: Optional Rich console for progress output. When
+            provided, each snapshot step is reported with a status spinner.
 
     Returns:
         List of (connection_name, snapshot_id, table_count, column_count) tuples.
     """
     logger.info("Starting snapshot")
     results: list[tuple[str, int, int, int]] = []
+    out = progress_console
 
     for name, nc in resolve_connections(config, connection_name):
+        if out:
+            out.print(f"Connecting to [bold]{nc.connection.type}[/bold] warehouse...")
         backend = connect_typed(nc.connection)
+        if out:
+            out.print("[green]✓[/green] Connected")
+
+        if out:
+            out.print("Fetching schemas...")
         schemas = select_schema_names(nc.selection, backend.list_schemas())
         logger.debug("[%s] Selected schemas: %s", name, schemas)
+        if out:
+            schema_list = ", ".join(schemas) if schemas else "(none)"
+            out.print(
+                f"[green]✓[/green] Found {len(schemas)} schema(s): {schema_list}"
+            )
+
+        if out:
+            out.print("Fetching schema info...")
         tables = backend.fetch_schema_info(schemas)
         tables = filter_table_infos(nc.selection, tables)
         logger.debug("[%s] Filtered to %d tables", name, len(tables))
-        volumes = backend.fetch_row_counts(tables)
+        if out:
+            out.print(
+                f"[green]✓[/green] {len(tables)} table(s): {_table_list(tables)}"
+            )
 
+        if out:
+            out.print("Fetching row counts...")
+        volumes = backend.fetch_row_counts(tables)
+        if out:
+            out.print("[green]✓[/green] Row counts collected")
+
+        if out:
+            out.print("Saving snapshot...")
         with open_state(config, backend) as state_db:
             snapshot_id = state_db.create_snapshot(connection_name=name)
             state_db.store_schema_data(snapshot_id, tables)
@@ -61,6 +103,11 @@ def take_snapshot(
             len(tables),
             total_cols,
         )
+        if out:
+            out.print(
+                f"[green]✓[/green] Snapshot #{snapshot_id} saved "
+                f"({len(tables)} tables, {total_cols} columns)"
+            )
         results.append((name, snapshot_id, len(tables), total_cols))
 
     return results
@@ -82,7 +129,9 @@ def run_snapshot(
     warnings = validate_config(config)
     for warning in warnings:
         console.print(f"[yellow]Warning:[/yellow] {warning}")
-    results = take_snapshot(config, connection_name=connection_name)
+    results = take_snapshot(
+        config, connection_name=connection_name, progress_console=console
+    )
 
     for name, snapshot_id, table_count, col_count in results:
         if len(results) > 1:
