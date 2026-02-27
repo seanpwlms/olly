@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useConnection } from "../hooks/useConnection";
 import { useDbt } from "../hooks/queries";
 import { StatCard } from "../components/StatCard";
@@ -6,17 +7,30 @@ import { StatsRow } from "../components/StatsRow";
 import { DbtFindingsTable } from "../components/DbtFindingsTable";
 import { CompiledSqlModal } from "../components/CompiledSqlModal";
 import { EmptyState } from "../components/EmptyState";
+import { ErrorState } from "../components/ErrorState";
+import { dbtRoute, type DbtSearch } from "../routeTree";
 
 export function DbtPage() {
   const { connection } = useConnection();
-  const { data, isLoading } = useDbt(connection);
-  const [rtFilter, setRtFilter] = useState("");
-  const [sevFilter, setSevFilter] = useState("");
+  const { data, isLoading, isError, refetch } = useDbt(connection);
+  const searchParams = useSearch({ from: dbtRoute.id });
+  const navigate = useNavigate({ from: dbtRoute.id });
+
+  const rtFilter = searchParams.resource_type ?? "";
+  const sevFilter = searchParams.severity ?? "";
+
+  const setFilter = (updates: Partial<DbtSearch>) => {
+    void navigate({
+      search: (prev) => ({ ...prev, ...updates }),
+    });
+  };
+
   const [sqlModal, setSqlModal] = useState<{
     sql: string;
     nodeId: string;
   } | null>(null);
 
+  if (isError) return <ErrorState message="Failed to load dbt results." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <div className="text-center text-gray-500 py-8">Loading...</div>;
 
   const { dbt_stats, dbt_findings, resource_types, severities } = data;
@@ -43,7 +57,7 @@ export function DbtPage() {
             <select
               className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
               value={rtFilter}
-              onChange={(e) => setRtFilter(e.target.value)}
+              onChange={(e) => setFilter({ resource_type: e.target.value || undefined })}
             >
               <option value="">All types</option>
               {resource_types.map((rt) => (
@@ -55,7 +69,7 @@ export function DbtPage() {
             <select
               className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
               value={sevFilter}
-              onChange={(e) => setSevFilter(e.target.value)}
+              onChange={(e) => setFilter({ severity: e.target.value || undefined })}
             >
               <option value="">All severities</option>
               {severities.map((s) => (

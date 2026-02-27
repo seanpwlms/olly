@@ -5,6 +5,7 @@ import { StatCard } from "../components/StatCard";
 import { StatsRow } from "../components/StatsRow";
 import { Badge } from "../components/Badge";
 import { VolumeTrendChart } from "../components/VolumeTrendChart";
+import { ErrorState } from "../components/ErrorState";
 
 export function TableDetailPage() {
   const { schema, table } = useParams({ strict: false }) as {
@@ -12,8 +13,9 @@ export function TableDetailPage() {
     table: string;
   };
   const { connection } = useConnection();
-  const { data, isLoading } = useTableDetail(schema, table, connection);
+  const { data, isLoading, isError, refetch } = useTableDetail(schema, table, connection);
 
+  if (isError) return <ErrorState message="Failed to load table details." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <div className="text-center text-gray-500 py-8">Loading...</div>;
 
   const { table_info, findings, volume_stats: vol, volume_timeseries, history, schema_diff } = data;

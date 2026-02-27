@@ -1,8 +1,15 @@
+import { Link } from "@tanstack/react-router";
+
+interface StatCardLink {
+  to: string;
+  search?: Record<string, string | number | undefined>;
+}
+
 interface StatCardProps {
   value: string | number;
   label: string;
   variant?: "error" | "warning" | "ok";
-  href?: string;
+  link?: StatCardLink;
   trend?: string;
   trendDirection?: "up" | "down" | "flat";
 }
@@ -25,7 +32,7 @@ const trendColors: Record<string, Record<string, string>> = {
   ok: { up: "text-emerald-500", down: "text-gray-400", flat: "text-gray-400" },
 };
 
-export function StatCard({ value, label, variant, href, trend, trendDirection }: StatCardProps) {
+export function StatCard({ value, label, variant, link, trend, trendDirection }: StatCardProps) {
   const accent = variant ? accentStyles[variant] : "";
   const valueColor = variant ? valueStyles[variant] : "text-gray-900";
   const trendColor =
@@ -45,11 +52,15 @@ export function StatCard({ value, label, variant, href, trend, trendDirection }:
     </div>
   );
 
-  if (href) {
+  if (link) {
     return (
-      <a href={href} className="no-underline text-inherit block flex-1 min-w-[140px]">
+      <Link
+        to={link.to}
+        search={link.search}
+        className="no-underline text-inherit block flex-1 min-w-[140px]"
+      >
         {content}
-      </a>
+      </Link>
     );
   }
 

@@ -6,11 +6,13 @@ import { StatsRow } from "../components/StatsRow";
 import { Badge } from "../components/Badge";
 import { EmptyState } from "../components/EmptyState";
 import { CostDailyChart } from "../components/CostDailyChart";
+import { ErrorState } from "../components/ErrorState";
 
 export function UsagePage() {
   const { connection } = useConnection();
-  const { data, isLoading } = useUsage(connection);
+  const { data, isLoading, isError, refetch } = useUsage(connection);
 
+  if (isError) return <ErrorState message="Failed to load usage data." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <div className="text-center text-gray-500 py-8">Loading...</div>;
 
   const { stats, usage_findings, cost_summary, cost_daily, least_used } = data;

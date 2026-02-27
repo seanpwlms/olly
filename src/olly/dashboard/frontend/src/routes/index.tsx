@@ -3,6 +3,7 @@ import { useConnection } from "../hooks/useConnection";
 import { useOverview } from "../hooks/queries";
 import { StatCard } from "../components/StatCard";
 import { StatsRow } from "../components/StatsRow";
+import { ErrorState } from "../components/ErrorState";
 import {
   AreaChart,
   Area,
@@ -28,8 +29,9 @@ function formatTrend(current: number, previous: number | undefined): { trend: st
 
 export function IndexPage() {
   const { connection } = useConnection();
-  const { data, isLoading } = useOverview(connection);
+  const { data, isLoading, isError, refetch } = useOverview(connection);
 
+  if (isError) return <ErrorState message="Failed to load dashboard data." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <div className="text-center text-gray-500 py-8">Loading...</div>;
 
   const { stats, dbt_stats, findings_by_connection, findings_trend, top_tables, prev_stats } = data;
@@ -49,7 +51,7 @@ export function IndexPage() {
           value={stats.error_count}
           label="Errors"
           variant="error"
-          href="/findings?severity=error"
+          link={{ to: "/findings", search: { severity: "error" } }}
           trend={errorTrend.trend}
           trendDirection={errorTrend.direction}
         />
@@ -57,17 +59,17 @@ export function IndexPage() {
           value={stats.warning_count}
           label="Warnings"
           variant="warning"
-          href="/findings?severity=warning"
+          link={{ to: "/findings", search: { severity: "warning" } }}
           trend={warningTrend.trend}
           trendDirection={warningTrend.direction}
         />
-        <StatCard value={stats.tables_monitored} label="Tables Monitored" href="/tables" />
+        <StatCard value={stats.tables_monitored} label="Tables Monitored" link={{ to: "/tables" }} />
         {(dbt_stats.error_count > 0 || dbt_stats.warning_count > 0) && (
           <StatCard
             value={dbt_stats.error_count + dbt_stats.warning_count}
             label="dbt Issues"
             variant={dbt_stats.error_count > 0 ? "error" : "warning"}
-            href="/dbt"
+            link={{ to: "/dbt" }}
           />
         )}
       </StatsRow>
@@ -77,7 +79,12 @@ export function IndexPage() {
           <h2 className="text-lg font-semibold text-gray-800 mb-3">Findings by Connection</h2>
           <StatsRow>
             {Object.entries(findings_by_connection).map(([conn, counts]) => (
-              <a key={conn} href={`/findings?connection=${conn}`} className="no-underline text-inherit block flex-1 min-w-[140px]">
+              <Link
+                key={conn}
+                to="/findings"
+                search={{ connection: conn }}
+                className="no-underline text-inherit block flex-1 min-w-[140px]"
+              >
                 <div className="bg-white rounded-lg border border-gray-200 shadow-sm px-5 py-4 hover:shadow-md transition-shadow">
                   <div className="text-xs text-gray-500 uppercase tracking-wide">{conn}</div>
                   <div className="flex gap-2 mt-1.5">
@@ -93,7 +100,7 @@ export function IndexPage() {
                     )}
                   </div>
                 </div>
-              </a>
+              </Link>
             ))}
           </StatsRow>
         </section>

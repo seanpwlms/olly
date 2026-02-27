@@ -1,28 +1,42 @@
-import { useState } from "react";
+import { useSearch, useNavigate } from "@tanstack/react-router";
 import { useConnection } from "../hooks/useConnection";
 import { useTables } from "../hooks/queries";
 import { TablesTable } from "../components/TablesTable";
 import { Pagination } from "../components/Pagination";
+import { ErrorState } from "../components/ErrorState";
+import { tablesRoute, type TablesSearch } from "../routeTree";
 
 export function TablesPage() {
   const { connection } = useConnection();
-  const [search, setSearch] = useState("");
-  const [sort, setSort] = useState("table");
-  const [order, setOrder] = useState("asc");
-  const [page, setPage] = useState(1);
+  const searchParams = useSearch({ from: tablesRoute.id });
+  const navigate = useNavigate({ from: tablesRoute.id });
 
-  const { data, isLoading } = useTables({ connection, search, sort, order, page });
+  const search = searchParams.search ?? "";
+  const sort = searchParams.sort ?? "table";
+  const order = searchParams.order ?? "asc";
+  const page = searchParams.page ?? 1;
+
+  const setFilter = (updates: Partial<TablesSearch>) => {
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        ...updates,
+        page: "page" in updates ? updates.page : 1,
+      }),
+    });
+  };
 
   const handleSort = (column: string) => {
     if (sort === column) {
-      setOrder(order === "asc" ? "desc" : "asc");
+      setFilter({ sort: column, order: order === "asc" ? "desc" : "asc" });
     } else {
-      setSort(column);
-      setOrder("asc");
+      setFilter({ sort: column, order: "asc" });
     }
-    setPage(1);
   };
 
+  const { data, isLoading, isError, refetch } = useTables({ connection, search, sort, order, page });
+
+  if (isError) return <ErrorState message="Failed to load tables." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <div className="text-center text-gray-500 py-8">Loading...</div>;
 
   return (
@@ -36,10 +50,7 @@ export function TablesPage() {
           placeholder="Filter tables..."
           className="w-64 px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-colors"
           value={search}
-          onChange={(e) => {
-            setSearch(e.target.value);
-            setPage(1);
-          }}
+          onChange={(e) => setFilter({ search: e.target.value || undefined })}
         />
       </div>
       <TablesTable
@@ -48,7 +59,7 @@ export function TablesPage() {
         order={order}
         onSort={handleSort}
       />
-      <Pagination page={page} totalPages={data.total_pages} onPageChange={setPage} />
+      <Pagination page={page} totalPages={data.total_pages} onPageChange={(p) => setFilter({ page: p > 1 ? p : undefined })} />
     </>
   );
 }

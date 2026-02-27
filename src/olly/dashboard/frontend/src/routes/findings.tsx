@@ -1,20 +1,35 @@
-import { useState } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useConnection } from "../hooks/useConnection";
 import { useFindings } from "../hooks/queries";
 import { StatCard } from "../components/StatCard";
 import { StatsRow } from "../components/StatsRow";
 import { FindingsTable } from "../components/FindingsTable";
 import { Pagination } from "../components/Pagination";
+import { ErrorState } from "../components/ErrorState";
+import { findingsRoute, type FindingsSearch } from "../routeTree";
 
 export function FindingsPage() {
   const { connection } = useConnection();
-  const [checkType, setCheckType] = useState("");
-  const [severity, setSeverity] = useState("");
-  const [schema, setSchema] = useState("");
-  const [q, setQ] = useState("");
-  const [page, setPage] = useState(1);
+  const search = useSearch({ from: findingsRoute.id });
+  const navigate = useNavigate({ from: findingsRoute.id });
 
-  const { data, isLoading } = useFindings({
+  const checkType = search.check_type ?? "";
+  const severity = search.severity ?? "";
+  const schema = search.schema ?? "";
+  const q = search.q ?? "";
+  const page = search.page ?? 1;
+
+  const setFilter = (updates: Partial<FindingsSearch>) => {
+    void navigate({
+      search: (prev) => ({
+        ...prev,
+        ...updates,
+        page: "page" in updates ? updates.page : 1,
+      }),
+    });
+  };
+
+  const { data, isLoading, isError, refetch } = useFindings({
     connection,
     check_type: checkType,
     severity,
@@ -23,6 +38,7 @@ export function FindingsPage() {
     page,
   });
 
+  if (isError) return <ErrorState message="Failed to load findings." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <div className="text-center text-gray-500 py-8">Loading...</div>;
 
   const { findings, stats, filters, total_pages, total, last_check_time } = data;
@@ -73,18 +89,12 @@ export function FindingsPage() {
               placeholder="Search findings..."
               className="min-w-[180px] px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-colors"
               value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => setFilter({ q: e.target.value || undefined })}
             />
             <select
               className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
               value={checkType}
-              onChange={(e) => {
-                setCheckType(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => setFilter({ check_type: e.target.value || undefined })}
             >
               <option value="">All checks</option>
               {filters.check_types.map((ct) => (
@@ -96,10 +106,7 @@ export function FindingsPage() {
             <select
               className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
               value={severity}
-              onChange={(e) => {
-                setSeverity(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => setFilter({ severity: e.target.value || undefined })}
             >
               <option value="">All severities</option>
               {filters.severities.map((s) => (
@@ -111,10 +118,7 @@ export function FindingsPage() {
             <select
               className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
               value={schema}
-              onChange={(e) => {
-                setSchema(e.target.value);
-                setPage(1);
-              }}
+              onChange={(e) => setFilter({ schema: e.target.value || undefined })}
             >
               <option value="">All schemas</option>
               {filters.schemas.map((s) => (
@@ -126,7 +130,7 @@ export function FindingsPage() {
           </div>
         </div>
         <FindingsTable findings={findings} />
-        <Pagination page={page} totalPages={total_pages} onPageChange={setPage} />
+        <Pagination page={page} totalPages={total_pages} onPageChange={(p) => setFilter({ page: p > 1 ? p : undefined })} />
       </section>
 
       {last_check_time && (
