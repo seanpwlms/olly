@@ -17,7 +17,7 @@ from olly.dashboard.data import (
     load_dbt_findings,
     load_findings,
 )
-from olly.state import StateStore
+from olly.state import BaseStateStore
 
 
 def serialize_dataclass(obj):
@@ -32,7 +32,7 @@ def serialize_dataclass(obj):
 
 
 def build_table_details(
-    state_db: StateStore,
+    state_db: BaseStateStore,
     tables: list,
     findings: list,
     conn_name: str = "",
@@ -86,47 +86,48 @@ def build_initial_state(findings_path: Path | None = None) -> dict:
     from olly.state import open_state
 
     adapter = connect_typed(first_nc.connection)
-    state_db = open_state(config, adapter, first_nc.connection.type)
 
     # Load findings data
     findings, generated_at = load_findings(findings_path)
     dbt_findings = load_dbt_findings(findings_path)
     cost_summary = load_cost_summary(findings_path)
 
-    # Get stats (pass conn_name!)
-    stats = get_stats(findings, generated_at, state_db, conn_name)
+    with open_state(config, adapter) as state_db:
+        # Get stats (pass conn_name!)
+        stats = get_stats(findings, generated_at, state_db, conn_name)
+
+        # Load tables list (pass conn_name!)
+        tables = state_db.get_latest_schema(conn_name)
+        tables_list = [
+            {
+                "schema": t.schema_name,
+                "table": t.table_name,
+                "type": t.table_type,
+                "columns": len(t.columns),
+                "row_count": None,  # Will be populated from volume records
+            }
+            for t in tables
+        ]
+
+        # Get row counts for tables (pass conn_name!)
+        volume_records = state_db.get_latest_volume(conn_name)
+        volume_map = {(v.schema_name, v.table_name): v.row_count for v in volume_records}
+        for table in tables_list:
+            key = (table["schema"], table["table"])
+            if key in volume_map:
+                table["row_count"] = volume_map[key]
+
+        # Pre-load table details for all tables
+        table_details = build_table_details(state_db, tables, findings, conn_name)
+
     dbt_stats = get_dbt_stats(dbt_findings)
 
     # Get usage-specific data
     usage_findings_list = get_usage_findings(findings)
     usage_stats = get_usage_stats(usage_findings_list, cost_summary)
 
-    # Load tables list (pass conn_name!)
-    tables = state_db.get_latest_schema(conn_name)
-    tables_list = [
-        {
-            "schema": t.schema_name,
-            "table": t.table_name,
-            "type": t.table_type,
-            "columns": len(t.columns),
-            "row_count": None,  # Will be populated from volume records
-        }
-        for t in tables
-    ]
-
-    # Get row counts for tables (pass conn_name!)
-    volume_records = state_db.get_latest_volume(conn_name)
-    volume_map = {(v.schema_name, v.table_name): v.row_count for v in volume_records}
-    for table in tables_list:
-        key = (table["schema"], table["table"])
-        if key in volume_map:
-            table["row_count"] = volume_map[key]
-
     findings_serialized = serialize_dataclass(findings)
     dbt_findings_serialized = serialize_dataclass(dbt_findings)
-
-    # Pre-load table details for all tables
-    table_details = build_table_details(state_db, tables, findings, conn_name)
 
     # Compute check breakdown (errors/warnings per check type)
     check_counts: dict[str, dict[str, int]] = {}

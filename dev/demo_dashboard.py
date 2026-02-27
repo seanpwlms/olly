@@ -27,7 +27,7 @@ from olly.results import write_findings_json
 def main() -> None:
     no_serve = "--no-serve" in sys.argv
 
-    # 1. Fresh setup: DB, config, baseline snapshot
+    # 1. Fresh setup: DB, config, 2 baseline snapshots
     config = setup()
 
     # 2. Disable contracts (module is being rewritten)
@@ -36,8 +36,8 @@ def main() -> None:
     # 3. Build volume history so the trend chart has data
     add_volume_history(config, snapshots=6)
 
-    # 4. Introduce drift (schema, volume, freshness)
-    drift()
+    # 4. Introduce drift (schema, volume, freshness) and take a new snapshot
+    drift(config)
 
     # 5. Run checks and write findings.json (what the dashboard reads)
     os.chdir(DEV_DIR)

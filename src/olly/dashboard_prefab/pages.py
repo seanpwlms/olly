@@ -13,14 +13,12 @@ from prefab_ui.components import (
     H2,
     H3,
     LineChart,
-    Muted,
     Row,
     Text,
 )
 from prefab_ui.actions import SetState
 
 from olly.dashboard_prefab.components import (
-    check_breakdown_card,
     findings_table,
     stat_card,
 )
@@ -107,7 +105,7 @@ def build_dashboard_page():
         # DBT results preview
         with Column(gap=4):
             H3("DBT Results")
-            Text(f"{{{{ stats.dbt_error_count }}}} errors, {{{{ stats.dbt_warning_count }}}} warnings")
+            Text("{{ stats.dbt_error_count }} errors, {{ stats.dbt_warning_count }} warnings")
             # Show all dbt findings (prefab may not support slice filter)
             DataTable(
                 rows="{{ dbt_findings }}",

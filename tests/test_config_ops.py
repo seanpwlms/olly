@@ -1,12 +1,9 @@
 """Tests for config_ops: pattern matching, schema/table filtering, override resolution, validation."""
 
 from olly.config import (
-    ConnectionConfig,
     ContractsConfig,
     DbtConfig,
     IntegrityConfig,
-    NamedConnection,
-    OllyConfig,
     Override,
     Selection,
 )
@@ -19,17 +16,11 @@ from olly.config_ops import (
     validate_config,
 )
 from olly.models import TableInfo
+from conftest import make_config
 
 
-def _config(**kwargs) -> OllyConfig:
-    conn = kwargs.pop("connection", ConnectionConfig(type="duckdb", path="x.duckdb"))
-    selection = kwargs.pop("selection", Selection())
-    overrides = kwargs.pop("overrides", [])
-    nc = NamedConnection(
-        name="primary", connection=conn, selection=selection, overrides=overrides
-    )
-    kwargs.setdefault("connections", {"primary": nc})
-    return OllyConfig(**kwargs)
+# Alias for backward compatibility
+_config = make_config
 
 
 # --- match_pattern ---

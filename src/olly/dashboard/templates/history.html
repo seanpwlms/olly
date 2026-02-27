@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}History - Olly Dashboard{% endblock %}
+{% block content %}
+<h1>History</h1>
+
+<div class="stats-row">
+    <div class="stat-card">
+        <div class="stat-value">{{ snapshots|length }}</div>
+        <div class="stat-label">Snapshots ({{ days }} days)</div>
+    </div>
+</div>
+
+<section>
+    <div class="table-header">
+        <h2>Date Range</h2>
+        <div class="filters">
+            <select hx-get="/history" hx-target="body" name="days" class="filter-select">
+                <option value="7" {% if days == 7 %}selected{% endif %}>Last 7 days</option>
+                <option value="30" {% if days == 30 %}selected{% endif %}>Last 30 days</option>
+                <option value="90" {% if days == 90 %}selected{% endif %}>Last 90 days</option>
+            </select>
+        </div>
+    </div>
+</section>
+
+{% if snapshot_chart_spec %}
+<section class="chart-section">
+    <h2>Snapshot Timeline</h2>
+    <div id="snapshot-chart"></div>
+    <script>
+        vegaEmbed('#snapshot-chart', {{ snapshot_chart_spec|safe }}, {actions: false});
+    </script>
+</section>
+{% endif %}
+
+{% if cost_chart_spec %}
+<section class="chart-section">
+    <h2>Cost Trend</h2>
+    <div id="cost-chart"></div>
+    <script>
+        vegaEmbed('#cost-chart', {{ cost_chart_spec|safe }}, {actions: false});
+    </script>
+</section>
+{% endif %}
+
+{% if snapshots %}
+<section>
+    <h2>Recent Snapshots</h2>
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>Snapshot ID</th>
+                <th>Created At</th>
+                <th>Tables Captured</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for snapshot in snapshots %}
+            <tr>
+                <td>{{ snapshot.snapshot_id }}</td>
+                <td>{{ snapshot.created_at[:16].replace("T", " ") }}</td>
+                <td>{{ snapshot.table_count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% else %}
+<section>
+    <p class="empty-state">No snapshots found for the selected date range.</p>
+</section>
+{% endif %}
+{% endblock %}

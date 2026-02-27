@@ -14,9 +14,24 @@
     <header>
         <nav>
             <a href="/" class="logo">olly</a>
+            <a href="/findings" class="nav-link">Findings</a>
+            <a href="/history" class="nav-link">History</a>
             <a href="/tables" class="nav-link">Tables</a>
             <a href="/usage" class="nav-link">Usage</a>
             <a href="/dbt" class="nav-link">dbt</a>
+            {% if connections|length > 1 %}
+            <select name="connection"
+                    hx-get="{{ request.url.path }}"
+                    hx-include="[name='connection']"
+                    hx-target="body"
+                    class="connection-select">
+                {% for conn in connections %}
+                <option value="{{ conn }}" {% if conn == current_connection %}selected{% endif %}>
+                    {{ conn }}
+                </option>
+                {% endfor %}
+            </select>
+            {% endif %}
         </nav>
     </header>
     <main>

@@ -10,24 +10,12 @@ import pytest
 
 from olly.checks.contracts import _type_compatible, check_contracts
 from olly.contracts import ColumnContract, TableSpec, load_contracts
+from conftest import FakeAdapter
 
 
 def _schema(cols: Any) -> ibis.Schema:
     """Create an ibis.Schema from a dict (wraps for type checker)."""
     return ibis.Schema(cols)
-
-
-class FakeAdapter:
-    """Test adapter that returns pre-built Ibis schemas."""
-
-    def __init__(self, tables: dict[tuple[str, str], ibis.Schema] | None = None):
-        self._tables = tables or {}
-
-    def fetch_table_schema(self, schema_name: str, table_name: str) -> ibis.Schema:
-        key = (schema_name, table_name)
-        if key not in self._tables:
-            raise RuntimeError(f"Table not found: {schema_name}.{table_name}")
-        return self._tables[key]
 
 
 def test_contracts_missing_table():

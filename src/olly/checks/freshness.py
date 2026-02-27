@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from olly.config import ResolvedTableSettings, Settings
 from olly.models import Finding, TableInfo
-from olly.state import StateStore
+from olly.state import BaseStateStore
 
 if TYPE_CHECKING:
     from olly.adapter import Adapter
@@ -19,7 +19,7 @@ def check_freshness(
     tables: list[TableInfo],
     settings: Settings,
     overrides: dict[tuple[str, str], ResolvedTableSettings],
-    state_db: StateStore,
+    state_db: BaseStateStore,
     connection_name: str = "",
 ) -> list[Finding]:
     """Check tables for stale data using timestamps or row-count heuristics.
@@ -122,7 +122,7 @@ def _check_timestamp_freshness(
 
 def _check_staleness_proxy(
     table: TableInfo,
-    state_db: StateStore,
+    state_db: BaseStateStore,
     settings: Settings,
     connection_name: str = "",
 ) -> Finding | None:

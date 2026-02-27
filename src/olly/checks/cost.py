@@ -9,7 +9,7 @@ from olly.models import CostRecord, Finding
 if TYPE_CHECKING:
     from olly.adapter import Adapter
     from olly.config import CostConfig
-    from olly.state import StateStore
+    from olly.state import BaseStateStore
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ def check_cost(
     adapter: Adapter,
     schemas: list[str],
     cost_config: CostConfig,
-    state_db: StateStore,
+    state_db: BaseStateStore,
     connection_name: str = "",
 ) -> tuple[list[CostRecord], list[Finding]]:
     """Fetch query costs and detect cost anomalies.
@@ -53,7 +53,7 @@ def check_cost(
 
 def _detect_cost_anomalies(
     current_records: list[CostRecord],
-    state_db: StateStore,
+    state_db: BaseStateStore,
     spike_threshold: float,
     connection_name: str = "",
 ) -> list[Finding]:

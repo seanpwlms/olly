@@ -3,31 +3,19 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from pathlib import Path
 from dataclasses import asdict
 
 from rich.console import Console
 from rich.table import Table
 
-from olly.adapter import Adapter, connect_typed
-from olly.config import OllyConfig, load_config
+from olly.checker import run_checks
+from olly.config import load_config
 from olly.config_ops import (
-    filter_table_infos,
     resolve_connections,
-    resolve_table_settings_with_sources,
-    select_schema_names,
     validate_config,
 )
 from olly.logging import setup_logging
-from olly.checks.dbt import check_dbt
-from olly.checks.freshness import check_freshness
-from olly.checks.integrity import load_syncs, run_syncs
-from olly.checks.schema import check_schema
-from olly.checks.volume import check_volume
-from olly.checks.contracts import check_contracts
-from olly.checks.cost import check_cost, summarize_costs
-from olly.checks.usage import check_usage
-from olly.contracts import load_contracts
+from olly.checks.cost import summarize_costs
 from olly.models import CostRecord, DbtFinding, Finding
 from olly.results import write_findings_json
 from olly.slack import send_slack_alert
@@ -36,144 +24,6 @@ from olly.state import open_state
 logger = logging.getLogger(__name__)
 
 console = Console()
-
-
-def run_checks(
-    config: OllyConfig,
-    adapter: Adapter | None = None,
-    connection_name: str | None = None,
-) -> tuple[list[Finding], list[DbtFinding], list[CostRecord]]:
-    """Run all enabled checks against the warehouse and return findings.
-
-    Executes schema, contract, volume, freshness, integrity, cost, and dbt
-    checks by comparing the current warehouse state to the latest snapshot.
-
-    Args:
-        config: Parsed Olly configuration.
-        adapter: Optional pre-built adapter (only used for single-connection).
-        connection_name: Optional connection name to check.
-
-    Returns:
-        Tuple of (warehouse findings, dbt findings, cost records).
-    """
-    logger.info("Starting checks")
-    findings: list[Finding] = []
-    cost_records: list[CostRecord] = []
-
-    connections = resolve_connections(config, connection_name)
-
-    for name, nc in connections:
-        backend = adapter if adapter is not None else connect_typed(nc.connection)
-
-        schemas = select_schema_names(nc.selection, backend.list_schemas())
-        current_tables = backend.fetch_schema_info(schemas)
-        current_tables = filter_table_infos(nc.selection, current_tables)
-        current_volumes = backend.fetch_row_counts(current_tables)
-
-        # Usage checks (independent of snapshots)
-        if config.usage.enabled:
-            logger.debug("[%s] Running usage checks", name)
-            usage_findings = check_usage(backend, schemas, config.usage)
-            for f in usage_findings:
-                f.connection_name = name
-            findings.extend(usage_findings)
-
-        with open_state(config, backend, nc.connection.type) as state_db:
-            # Cost checks (independent of snapshots)
-            if config.cost.enabled:
-                logger.debug("[%s] Running cost checks", name)
-                conn_cost_records, cost_findings = check_cost(
-                    backend, schemas, config.cost, state_db, connection_name=name
-                )
-                for f in cost_findings:
-                    f.connection_name = name
-                findings.extend(cost_findings)
-                cost_records.extend(conn_cost_records)
-                if conn_cost_records:
-                    snap_id = state_db.create_snapshot(connection_name=name)
-                    state_db.store_cost_data(snap_id, conn_cost_records)
-
-            if not state_db.has_snapshots(connection_name=name):
-                continue
-
-            baseline_tables = state_db.get_latest_schema(connection_name=name)
-
-            # Schema checks
-            logger.debug("[%s] Running schema checks", name)
-            schema_findings = check_schema(current_tables, baseline_tables)
-            for f in schema_findings:
-                f.connection_name = name
-            findings.extend(schema_findings)
-
-            logger.debug("[%s] Running contract checks", name)
-            if config.contracts.module:
-                config_path = config.config_path or Path("olly.toml")
-                all_contracts = load_contracts(config.contracts.module, config_path)
-                contracts = [
-                    c
-                    for c in all_contracts
-                    if c.connection_name is None or c.connection_name == name
-                ]
-                contract_findings = check_contracts(contracts, backend)
-                for f in contract_findings:
-                    f.connection_name = name
-                findings.extend(contract_findings)
-
-            # Volume checks
-            logger.debug("[%s] Running volume checks", name)
-            overrides_map = {
-                (t.schema_name, t.table_name): resolve_table_settings_with_sources(
-                    config.settings, nc.overrides, t.schema_name, t.table_name
-                )
-                for t in current_tables
-            }
-            thresholds = {
-                key: settings.volume_zscore_threshold
-                for key, settings in overrides_map.items()
-            }
-
-            volume_findings = check_volume(
-                current_volumes, state_db, config.settings, thresholds,
-                connection_name=name,
-            )
-            for f in volume_findings:
-                f.connection_name = name
-            findings.extend(volume_findings)
-
-            # Freshness checks
-            logger.debug("[%s] Running freshness checks", name)
-            freshness_findings = check_freshness(
-                backend, current_tables, config.settings, overrides_map, state_db,
-                connection_name=name,
-            )
-            for f in freshness_findings:
-                f.connection_name = name
-            findings.extend(freshness_findings)
-
-    # Integrity checks (global, not per-connection)
-    logger.debug("Running integrity checks")
-    if config.integrity.module:
-        config_path = config.config_path or Path("olly.toml")
-        syncs = load_syncs(config.integrity.module, config_path)
-        findings.extend(run_syncs(syncs, sources=config.sources))
-
-    # dbt checks (global)
-    logger.debug("Running dbt checks")
-    dbt_findings = _run_dbt_checks(config)
-
-    total = len(findings) + len(dbt_findings)
-    logger.info("Checks complete: %d findings", total)
-    return findings, dbt_findings, cost_records
-
-
-def _run_dbt_checks(config: OllyConfig) -> list[DbtFinding]:
-    """Run dbt checks if configured."""
-    if not config.dbt.run_results_path:
-        return []
-    run_results_path = Path(config.dbt.run_results_path)
-    if not run_results_path.is_absolute() and config.config_path is not None:
-        run_results_path = config.config_path.parent / run_results_path
-    return check_dbt(run_results_path, config.dbt)
 
 
 def print_findings_table(findings: list[Finding]) -> None:
@@ -311,16 +161,16 @@ def run_check(
         console.print(f"[yellow]Warning:[/yellow] {warning}")
 
     connections = resolve_connections(config, connection_name)
-    has_any_snapshots = False
+    has_multiple_snapshots = False
     with open_state(config) as state_db:
         for name, nc in connections:
-            if state_db.has_snapshots(connection_name=name):
-                has_any_snapshots = True
+            if state_db.has_multiple_snapshots(connection_name=name):
+                has_multiple_snapshots = True
                 break
 
-    if not has_any_snapshots:
+    if not has_multiple_snapshots:
         console.print(
-            "[yellow]No snapshots found. Run 'olly snapshot' first.[/yellow]"
+            "[yellow]Need at least 2 snapshots to run checks. Run 'olly snapshot' twice.[/yellow]"
         )
         raise SystemExit(1)
 

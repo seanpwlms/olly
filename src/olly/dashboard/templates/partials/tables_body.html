@@ -7,6 +7,7 @@
             <th class="sortable" onclick="sortBy('type')">Type {{ sort_arrow('type') }}</th>
             <th class="sortable" onclick="sortBy('columns')">Columns {{ sort_arrow('columns') }}</th>
             <th class="sortable" onclick="sortBy('row_count')">Row Count {{ sort_arrow('row_count') }}</th>
+            <th>Status</th>
         </tr>
     </thead>
     <tbody>
@@ -17,10 +18,19 @@
             <td>{{ t.type }}</td>
             <td>{{ t.columns }}</td>
             <td>{{ "{:,}".format(t.row_count) if t.row_count is not none else "—" }}</td>
+            <td>
+                {% if t.error_count %}
+                <span class="badge badge-error">{{ t.error_count }} error{{ "s" if t.error_count != 1 else "" }}</span>
+                {% elif t.warning_count %}
+                <span class="badge badge-warning">{{ t.warning_count }} warning{{ "s" if t.warning_count != 1 else "" }}</span>
+                {% else %}
+                <span class="badge badge-ok">OK</span>
+                {% endif %}
+            </td>
         </tr>
         {% endfor %}
         {% if not table_rows %}
-        <tr><td colspan="5" class="empty-state">No tables found</td></tr>
+        <tr><td colspan="6" class="empty-state">No tables found</td></tr>
         {% endif %}
     </tbody>
 </table>

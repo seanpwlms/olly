@@ -96,3 +96,61 @@ def volume_trend_chart(timeseries: list[dict]) -> dict:
             ],
         },
     }
+
+
+def snapshot_timeline_chart(snapshot_data: list[dict]) -> dict:
+    """Vega-Lite spec for snapshot frequency over time."""
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 200,
+        "data": {"values": snapshot_data},
+        "mark": {"type": "bar", "tooltip": True, "color": "#0984e3"},
+        "encoding": {
+            "x": {
+                "field": "created_at",
+                "type": "temporal",
+                "title": "Snapshot Time",
+                "axis": {"format": "%b %d"},
+            },
+            "y": {
+                "field": "table_count",
+                "type": "quantitative",
+                "title": "Tables Captured",
+            },
+            "tooltip": [
+                {"field": "created_at", "type": "temporal", "title": "Time"},
+                {"field": "table_count", "type": "quantitative", "title": "Tables"},
+                {"field": "snapshot_id", "type": "quantitative", "title": "Snapshot ID"},
+            ],
+        },
+    }
+
+
+def cost_trend_chart(cost_data: list[dict]) -> dict:
+    """Vega-Lite spec for cost history."""
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 200,
+        "data": {"values": cost_data},
+        "mark": {"type": "line", "point": True, "tooltip": True, "color": "#27ae60"},
+        "encoding": {
+            "x": {
+                "field": "snapshot",
+                "type": "temporal",
+                "title": "Snapshot Time",
+                "axis": {"format": "%b %d"},
+            },
+            "y": {
+                "field": "cost",
+                "type": "quantitative",
+                "title": "Total Cost (USD)",
+                "axis": {"format": "$.2f"},
+            },
+            "tooltip": [
+                {"field": "snapshot", "type": "temporal", "title": "Time"},
+                {"field": "cost", "type": "quantitative", "title": "Cost (USD)", "format": "$.2f"},
+            ],
+        },
+    }
