@@ -209,3 +209,7 @@ __marimo__/
 .loq_cache
 
 .claude/
+
+# Frontend
+node_modules/
+src/olly/dashboard/static/dist/

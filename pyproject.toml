@@ -19,7 +19,7 @@ dependencies = [
 duckdb = ["ibis-framework[duckdb]"]
 postgres = ["ibis-framework[postgres]"]
 bigquery = ["ibis-framework[bigquery]"]
-dashboard = ["fastapi>=0.115.0", "uvicorn[standard]>=0.32.0", "jinja2>=3.1.0"]
+dashboard = ["fastapi>=0.115.0", "uvicorn[standard]>=0.32.0"]
 
 [project.scripts]
 olly = "olly:main"
