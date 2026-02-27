@@ -6,7 +6,6 @@ import type {
   FindingsResponse,
   TablesResponse,
   TableDetailResponse,
-  HistoryResponse,
   UsageResponse,
   DbtResponse,
 } from "../types";
@@ -80,17 +79,6 @@ export function useTableDetail(
     queryFn: () =>
       fetchApi<TableDetailResponse>(`/api/table/${schema}/${table}`, {
         connection,
-      }),
-  });
-}
-
-export function useHistory(connection: string, days: number) {
-  return useQuery({
-    queryKey: ["history", connection, days],
-    queryFn: () =>
-      fetchApi<HistoryResponse>("/api/history", {
-        connection,
-        days: String(days),
       }),
   });
 }

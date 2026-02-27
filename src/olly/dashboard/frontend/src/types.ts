@@ -82,13 +82,6 @@ export interface SchemaDiff {
   nullable_changes: [string, boolean, boolean][];
 }
 
-export interface SnapshotInfo {
-  snapshot_id: number;
-  created_at: string;
-  connection_name: string;
-  table_count: number;
-}
-
 export interface TableRow {
   schema: string;
   table: string;
@@ -118,18 +111,28 @@ export interface CostSummary {
   top_users?: { user: string; cost_usd: number }[];
 }
 
+export interface FindingsTrendPoint {
+  timestamp: string;
+  errors: number;
+  warnings: number;
+}
+
+export interface PrevStats {
+  error_count: number;
+  warning_count: number;
+}
+
 // API response types
 export interface OverviewResponse {
   stats: DashboardStats;
   dbt_stats: DbtStats;
-  check_breakdown: CheckBreakdown[];
   findings_by_connection: Record<
     string,
     { errors: number; warnings: number }
   >;
-  critical_findings: Finding[];
-  findings: Finding[];
-  dbt_findings: DbtFinding[];
+  findings_trend: FindingsTrendPoint[];
+  top_tables: TableRow[];
+  prev_stats: PrevStats | null;
 }
 
 export interface FindingsResponse {
@@ -160,11 +163,6 @@ export interface TableDetailResponse {
   volume_timeseries: { snapshot: string; row_count: number }[];
   history: TableHistory;
   schema_diff: SchemaDiff | null;
-}
-
-export interface HistoryResponse {
-  snapshots: SnapshotInfo[];
-  days: number;
 }
 
 export interface UsageResponse {

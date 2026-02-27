@@ -356,8 +356,9 @@ def test_api_overview(dashboard_client):
     data = resp.json()
     assert data["stats"]["error_count"] == 1
     assert data["stats"]["warning_count"] == 1
-    assert "orders" in str(data["findings"])
-    assert len(data["check_breakdown"]) > 0
+    assert "top_tables" in data
+    assert "findings_trend" in data
+    assert isinstance(data["findings_by_connection"], dict)
 
 
 def test_api_findings_no_filter(dashboard_client):

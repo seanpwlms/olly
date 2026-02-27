@@ -13,7 +13,6 @@ export function RootLayout() {
 
   const navLinks = [
     { to: "/findings", label: "Findings" },
-    { to: "/history", label: "History" },
     { to: "/tables", label: "Tables" },
     { to: "/usage", label: "Usage" },
     { to: "/dbt", label: "dbt" },

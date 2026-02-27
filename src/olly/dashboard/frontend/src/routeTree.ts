@@ -8,7 +8,6 @@ import { IndexPage } from "./routes/index";
 import { FindingsPage } from "./routes/findings";
 import { TablesPage } from "./routes/tables";
 import { TableDetailPage } from "./routes/table.$schema.$table";
-import { HistoryPage } from "./routes/history";
 import { UsagePage } from "./routes/usage";
 import { DbtPage } from "./routes/dbt";
 
@@ -45,12 +44,6 @@ const tableDetailRoute = createRoute({
   component: TableDetailPage,
 });
 
-const historyRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/history",
-  component: HistoryPage,
-});
-
 const usageRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/usage",
@@ -68,7 +61,6 @@ const routeTree = rootRoute.addChildren([
   findingsRoute,
   tablesRoute,
   tableDetailRoute,
-  historyRoute,
   usageRoute,
   dbtRoute,
 ]);

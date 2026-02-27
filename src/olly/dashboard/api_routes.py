@@ -10,12 +10,13 @@ from fastapi.responses import JSONResponse
 from olly.dashboard.data import (
     filter_findings,
     get_cost_daily_timeseries,
-    get_critical_findings,
     get_dbt_stats,
     get_findings_by_connection,
     get_findings_by_table,
     get_findings_stats,
+    get_findings_trend,
     get_least_used_tables,
+    get_previous_stats,
     get_schema_diff,
     get_snapshot_history,
     get_stats,
@@ -87,20 +88,12 @@ def api_overview(connection: str = Query("")):
         findings = load_findings_from_db(state_db)
         dbt_findings = load_dbt_findings_from_db(state_db)
         stats = get_stats(findings, state_db, conn_name)
+        findings_trend = get_findings_trend(state_db)
+        prev = get_previous_stats(state_db)
+        findings_by_table_map = get_findings_by_table(findings)
+        table_rows = _build_table_rows(state_db, conn_name, findings_by_table_map)
 
     dbt_stats = get_dbt_stats(dbt_findings)
-    dbt_issue_findings = [f for f in dbt_findings if f.severity != "pass"]
-
-    check_counts: dict[str, dict[str, int]] = {}
-    for f in findings:
-        check_counts.setdefault(f.check_type, {"error": 0, "warning": 0})
-        check_counts[f.check_type][f.severity] = (
-            check_counts[f.check_type].get(f.severity, 0) + 1
-        )
-    check_breakdown = [
-        {"check_type": ct, "errors": counts["error"], "warnings": counts["warning"]}
-        for ct, counts in sorted(check_counts.items())
-    ]
 
     findings_by_connection = get_findings_by_connection(findings)
     fbc = {
@@ -108,16 +101,23 @@ def api_overview(connection: str = Query("")):
         for conn, (e, w) in findings_by_connection.items()
     }
 
-    critical_findings = get_critical_findings(findings, limit=5)
+    # Top tables with issues, sorted by errors desc then warnings desc
+    top_tables = sorted(
+        [r for r in table_rows if r["error_count"] > 0 or r["warning_count"] > 0],
+        key=lambda r: (-r["error_count"], -r["warning_count"]),
+    )[:5]
+
+    prev_stats = (
+        {"error_count": prev[0], "warning_count": prev[1]} if prev else None
+    )
 
     return {
         "stats": _dc(stats),
         "dbt_stats": _dc(dbt_stats),
-        "check_breakdown": check_breakdown,
         "findings_by_connection": fbc,
-        "critical_findings": _dc(critical_findings),
-        "findings": _dc(findings),
-        "dbt_findings": _dc(dbt_issue_findings),
+        "findings_trend": _dc(findings_trend),
+        "top_tables": top_tables,
+        "prev_stats": prev_stats,
     }
 
 

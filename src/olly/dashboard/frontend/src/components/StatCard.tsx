@@ -3,6 +3,8 @@ interface StatCardProps {
   label: string;
   variant?: "error" | "warning" | "ok";
   href?: string;
+  trend?: string;
+  trendDirection?: "up" | "down" | "flat";
 }
 
 const accentStyles: Record<string, string> = {
@@ -17,9 +19,19 @@ const valueStyles: Record<string, string> = {
   ok: "text-emerald-600",
 };
 
-export function StatCard({ value, label, variant, href }: StatCardProps) {
+const trendColors: Record<string, Record<string, string>> = {
+  error: { up: "text-red-500", down: "text-emerald-500", flat: "text-gray-400" },
+  warning: { up: "text-amber-500", down: "text-emerald-500", flat: "text-gray-400" },
+  ok: { up: "text-emerald-500", down: "text-gray-400", flat: "text-gray-400" },
+};
+
+export function StatCard({ value, label, variant, href, trend, trendDirection }: StatCardProps) {
   const accent = variant ? accentStyles[variant] : "";
   const valueColor = variant ? valueStyles[variant] : "text-gray-900";
+  const trendColor =
+    trend && trendDirection && variant
+      ? trendColors[variant]?.[trendDirection] ?? "text-gray-400"
+      : "text-gray-400";
 
   const content = (
     <div
@@ -27,6 +39,9 @@ export function StatCard({ value, label, variant, href }: StatCardProps) {
     >
       <div className={`text-2xl font-bold ${valueColor}`}>{value}</div>
       <div className="text-xs text-gray-500 uppercase tracking-wide mt-1">{label}</div>
+      {trend && (
+        <div className={`text-xs mt-1 ${trendColor}`}>{trend}</div>
+      )}
     </div>
   );
 

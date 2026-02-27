@@ -13,9 +13,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from seed_dashboard_data import seed_rich_dashboard_data
 from seed_db import (
     DEV_DIR,
-    add_volume_history,
     drift,
     run_checks_in_dev,
     setup,
@@ -27,19 +27,16 @@ from olly.results import write_findings_json
 def main() -> None:
     no_serve = "--no-serve" in sys.argv
 
-    # 1. Fresh setup: DB, config, 2 baseline snapshots
+    # 1. Fresh setup: DB, config, integrity DBs, dbt results, 2 baseline snapshots
     config = setup()
 
-    # 2. Disable contracts (module is being rewritten)
-    config.contracts.module = None
+    # 2. Generate rich historical data (30 days of snapshots, findings, cost data)
+    seed_rich_dashboard_data(config)
 
-    # 3. Build volume history so the trend chart has data
-    add_volume_history(config, snapshots=6)
-
-    # 4. Introduce drift (schema, volume, freshness) and take a new snapshot
+    # 3. Introduce drift (schema, volume, freshness, contracts, integrity)
     drift(config)
 
-    # 5. Run checks and write findings.json (what the dashboard reads)
+    # 4. Run live checks so dashboard shows current findings
     os.chdir(DEV_DIR)
     findings, dbt_findings = run_checks_in_dev(config)
     findings_path = write_findings_json(findings, dbt_findings=dbt_findings)
