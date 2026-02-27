@@ -28,11 +28,14 @@ def check_dbt(
         logger.warning("dbt run_results.json not found at %s", run_results_path)
         return []
 
+    logger.info("Found dbt run_results.json at %s", run_results_path)
+
     with open(run_results_path, encoding="utf-8") as f:
         data = json.load(f)
 
     invocation_id = data.get("metadata", {}).get("invocation_id", "")
     results = data.get("results", [])
+    logger.info("dbt run_results.json contains %d result(s)", len(results))
     findings: list[DbtFinding] = []
 
     for result in results:
@@ -116,4 +119,18 @@ def check_dbt(
                 )
             continue
 
+        # Passing nodes (success, pass, or any other unhandled status)
+        findings.append(
+            DbtFinding(
+                resource_type=resource_type,
+                severity="pass",
+                unique_id=unique_id,
+                status=status,
+                execution_time=execution_time,
+                description=message or f"dbt {resource_type} passed",
+                details=details,
+            )
+        )
+
+    logger.info("dbt check complete: %d finding(s) from %d result(s)", len(findings), len(results))
     return findings

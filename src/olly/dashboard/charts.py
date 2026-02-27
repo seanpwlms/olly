@@ -47,6 +47,35 @@ def severity_breakdown_chart(findings: list[Finding]) -> dict:
     }
 
 
+def cost_by_day_chart(daily_data: list[dict]) -> dict:
+    """Vega-Lite spec for a line chart of daily cost over time."""
+    return {
+        "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+        "width": "container",
+        "height": 250,
+        "data": {"values": daily_data},
+        "mark": {"type": "line", "point": True, "tooltip": True, "color": "#0984e3"},
+        "encoding": {
+            "x": {
+                "field": "day",
+                "type": "temporal",
+                "title": "Date",
+                "axis": {"format": "%b %d"},
+            },
+            "y": {
+                "field": "cost",
+                "type": "quantitative",
+                "title": "Cost (USD)",
+                "axis": {"format": "$.2f"},
+            },
+            "tooltip": [
+                {"field": "day", "type": "temporal", "title": "Date"},
+                {"field": "cost", "type": "quantitative", "title": "Cost (USD)", "format": "$.2f"},
+            ],
+        },
+    }
+
+
 def cost_by_table_chart(top_tables: list[dict]) -> dict:
     """Vega-Lite spec for a horizontal bar chart of cost by table."""
     data = [

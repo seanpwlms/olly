@@ -109,7 +109,8 @@ def test_init_db_creates_tables(tmp_path):
         assert "snapshots" in tables
         assert "schema_snapshot" in tables
         assert "volume_snapshot" in tables
-        assert "cost_snapshot" in tables
+        assert "cost_runs" in tables
+        assert "cost_records" in tables
         assert "findings" in tables
         assert "dbt_findings" in tables
 
@@ -144,14 +145,14 @@ def test_indexes_created(tmp_path):
         }
         assert "idx_schema_snapshot_sid" in indexes
         assert "idx_volume_snapshot_sid" in indexes
-        assert "idx_cost_snapshot_sid" in indexes
+        assert "idx_cost_records_run_id" in indexes
         assert "idx_findings_created_at" in indexes
         assert "idx_findings_connection" in indexes
         assert "idx_dbt_findings_created_at" in indexes
 
 
 def test_get_latest_cost(state_db):
-    """get_latest_cost returns cost records from the most recent snapshot."""
+    """get_latest_cost returns cost records from the most recent run."""
     record = CostRecord(
         schema_name="main",
         table_name="orders",
@@ -160,8 +161,7 @@ def test_get_latest_cost(state_db):
         estimated_cost_usd=5.0,
         query_count=3,
     )
-    sid = state_db.create_snapshot()
-    state_db.store_cost_data(sid, [record])
+    state_db.store_cost_data([record])
 
     latest = state_db.get_latest_cost()
     assert len(latest) == 1
@@ -170,7 +170,7 @@ def test_get_latest_cost(state_db):
 
 
 def test_get_latest_cost_empty(state_db):
-    """get_latest_cost returns empty list when no snapshots exist."""
+    """get_latest_cost returns empty list when no cost runs exist."""
     assert state_db.get_latest_cost() == []
 
 
@@ -300,6 +300,25 @@ def test_store_empty_dbt_findings(state_db):
     state_db.store_dbt_findings([])
     history = state_db.get_dbt_findings_history()
     assert history == []
+
+
+def test_clean_deletes_sqlite_db(tmp_path):
+    """clean() removes the SQLite database file."""
+    db_path = tmp_path / "clean_test.db"
+    db = StateDB(db_path=db_path)
+    db.create_snapshot()
+    assert db_path.exists()
+    db.clean()
+    assert not db_path.exists()
+
+
+def test_clean_no_error_when_missing(tmp_path):
+    """clean() is a no-op if the database file was already removed."""
+    db_path = tmp_path / "already_gone.db"
+    db = StateDB(db_path=db_path)
+    db_path.unlink()
+    db.close()
+    db.clean()  # should not raise
 
 
 def test_findings_tables_created(tmp_path):

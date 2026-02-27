@@ -220,7 +220,8 @@ class WarehouseStateStore(BaseStateStore):
         snapshots = self._table("snapshots")
         schema_snap = self._table("schema_snapshot")
         volume_snap = self._table("volume_snapshot")
-        cost_snap = self._table("cost_snapshot")
+        cost_runs = self._table("cost_runs")
+        cost_records = self._table("cost_records")
 
         self._exec(
             f"CREATE TABLE IF NOT EXISTS {snapshots} ("
@@ -246,8 +247,14 @@ class WarehouseStateStore(BaseStateStore):
             f"row_count {i} NOT NULL)"
         )
         self._exec(
-            f"CREATE TABLE IF NOT EXISTS {cost_snap} ("
-            f"snapshot_id {i} NOT NULL, "
+            f"CREATE TABLE IF NOT EXISTS {cost_runs} ("
+            f"id {i} NOT NULL, "
+            f"created_at {t} NOT NULL, "
+            f"connection_name {t} NOT NULL)"
+        )
+        self._exec(
+            f"CREATE TABLE IF NOT EXISTS {cost_records} ("
+            f"cost_run_id {i} NOT NULL, "
             f"schema_name {t} NOT NULL, "
             f"table_name {t} NOT NULL, "
             f"user_email {t} NOT NULL, "
@@ -293,8 +300,8 @@ class WarehouseStateStore(BaseStateStore):
                 f"ON {volume_snap}(snapshot_id)"
             )
             self._exec(
-                f"CREATE INDEX IF NOT EXISTS idx_wss_cost_sid "
-                f"ON {cost_snap}(snapshot_id)"
+                f"CREATE INDEX IF NOT EXISTS idx_wss_cost_run_id "
+                f"ON {cost_records}(cost_run_id)"
             )
             self._exec(
                 f"CREATE INDEX IF NOT EXISTS idx_wss_findings_created "
@@ -311,5 +318,18 @@ class WarehouseStateStore(BaseStateStore):
 
         logger.debug("Initialized warehouse state in schema %s", self._schema)
 
+    def _create_cost_run(self, connection_name: str = "") -> int:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        new_id = self._next_id("cost_runs")
+        self._exec(
+            f"INSERT INTO {self._table('cost_runs')} (id, created_at, connection_name) "
+            f"VALUES ({new_id}, '{_escape(now)}', '{_escape(connection_name)}')"
+        )
+        return new_id
+
     def close(self) -> None:
         pass  # Does not own the connection
+
+    def clean(self) -> None:
+        pass  # Warehouse state is managed externally

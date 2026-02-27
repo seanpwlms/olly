@@ -23,26 +23,6 @@
     </div>
 </section>
 
-{% if snapshot_chart_spec %}
-<section class="chart-section">
-    <h2>Snapshot Timeline</h2>
-    <div id="snapshot-chart"></div>
-    <script>
-        vegaEmbed('#snapshot-chart', {{ snapshot_chart_spec|safe }}, {actions: false});
-    </script>
-</section>
-{% endif %}
-
-{% if cost_chart_spec %}
-<section class="chart-section">
-    <h2>Cost Trend</h2>
-    <div id="cost-chart"></div>
-    <script>
-        vegaEmbed('#cost-chart', {{ cost_chart_spec|safe }}, {actions: false});
-    </script>
-</section>
-{% endif %}
-
 {% if snapshots %}
 <section>
     <h2>Recent Snapshots</h2>

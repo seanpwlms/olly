@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
 from olly.models import ColumnInfo, CostRecord, DbtFinding, Finding, TableInfo, VolumeRecord
@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_SNAPSHOT_TABLES = ("schema_snapshot", "volume_snapshot", "cost_snapshot")
+_SNAPSHOT_TABLES = ("schema_snapshot", "volume_snapshot")
 
 
 class BaseStateStore(ABC):
@@ -54,6 +54,10 @@ class BaseStateStore(ABC):
     @abstractmethod
     def close(self) -> None:
         """Close underlying resources."""
+
+    @abstractmethod
+    def clean(self) -> None:
+        """Delete all state data. No-op for warehouse-backed stores."""
 
     # --- Context manager ---
 
@@ -117,12 +121,15 @@ class BaseStateStore(ABC):
             rows,
         )
 
-    def store_cost_data(self, snapshot_id: int, records: list[CostRecord]) -> None:
+    def store_cost_data(
+        self, records: list[CostRecord], connection_name: str = ""
+    ) -> None:
         if not records:
             return
+        run_id = self._create_cost_run(connection_name)
         rows = [
             (
-                snapshot_id,
+                run_id,
                 r.schema_name,
                 r.table_name,
                 r.user_email,
@@ -133,15 +140,25 @@ class BaseStateStore(ABC):
             for r in records
         ]
         self._execute_many(
-            f"INSERT INTO {self._table('cost_snapshot')} "  # noqa: S608
-            "(snapshot_id, schema_name, table_name, user_email, "
+            f"INSERT INTO {self._table('cost_records')} "  # noqa: S608
+            "(cost_run_id, schema_name, table_name, user_email, "
             "total_bytes_billed, estimated_cost_usd, query_count) "
-            "VALUES (:snapshot_id, :schema_name, :table_name, :user_email, "
+            "VALUES (:cost_run_id, :schema_name, :table_name, :user_email, "
             ":total_bytes_billed, :estimated_cost_usd, :query_count)",
-            ["snapshot_id", "schema_name", "table_name", "user_email",
+            ["cost_run_id", "schema_name", "table_name", "user_email",
              "total_bytes_billed", "estimated_cost_usd", "query_count"],
             rows,
         )
+
+    def _create_cost_run(self, connection_name: str = "") -> int:
+        now = datetime.now(timezone.utc).isoformat()
+        lastrowid = self._execute(
+            f"INSERT INTO {self._table('cost_runs')} (created_at, connection_name) "  # noqa: S608
+            "VALUES (:created_at, :connection_name)",
+            {"created_at": now, "connection_name": connection_name},
+        )
+        assert lastrowid is not None
+        return lastrowid
 
     # --- Latest snapshot helpers ---
 
@@ -192,10 +209,15 @@ class BaseStateStore(ABC):
         return self._load_volume_for_snapshot(snapshot_ids[1])
 
     def get_latest_cost(self, connection_name: str = "") -> list[CostRecord]:
-        snapshot_id = self._get_latest_snapshot_id(connection_name)
-        if snapshot_id is None:
+        row = self._query_one(
+            f"SELECT id FROM {self._table('cost_runs')} "  # noqa: S608
+            "WHERE connection_name = :connection_name "
+            "ORDER BY id DESC LIMIT 1",
+            {"connection_name": connection_name},
+        )
+        if row is None:
             return []
-        return self.get_cost_records_for_snapshot(snapshot_id)
+        return self._load_cost_records(row[0])
 
     # --- Schema loading ---
 
@@ -297,7 +319,6 @@ class BaseStateStore(ABC):
         ids = [r[0] for r in rows]
         self._delete_by_ids("schema_snapshot", "snapshot_id", ids)
         self._delete_by_ids("volume_snapshot", "snapshot_id", ids)
-        self._delete_by_ids("cost_snapshot", "snapshot_id", ids)
         self._delete_by_ids("snapshots", "id", ids)
 
     @abstractmethod
@@ -310,22 +331,42 @@ class BaseStateStore(ABC):
         self, depth: int, connection_name: str = ""
     ) -> list[tuple[int, float]]:
         rows = self._query(
-            f"SELECT c.snapshot_id, SUM(c.estimated_cost_usd) AS total_cost "  # noqa: S608
-            f"FROM {self._table('cost_snapshot')} c "
-            f"JOIN {self._table('snapshots')} s ON c.snapshot_id = s.id "
-            "WHERE s.connection_name = :connection_name "
-            "GROUP BY c.snapshot_id "
-            "ORDER BY c.snapshot_id DESC LIMIT :depth",
+            f"SELECT cr.cost_run_id, SUM(cr.estimated_cost_usd) AS total_cost "  # noqa: S608
+            f"FROM {self._table('cost_records')} cr "
+            f"JOIN {self._table('cost_runs')} r ON cr.cost_run_id = r.id "
+            "WHERE r.connection_name = :connection_name "
+            "GROUP BY cr.cost_run_id "
+            "ORDER BY cr.cost_run_id DESC LIMIT :depth",
             {"connection_name": connection_name, "depth": depth},
         )
         return [(r[0], r[1]) for r in rows]
 
-    def get_cost_records_for_snapshot(self, snapshot_id: int) -> list[CostRecord]:
+    def get_cost_daily(
+        self, days: int, connection_name: str = ""
+    ) -> list[tuple[str, float]]:
+        """Get daily cost totals as (date_string, total_cost) pairs."""
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=days)
+        ).strftime("%Y-%m-%dT%H:%M:%S")
+        rows = self._query(
+            f"SELECT SUBSTR(r.created_at, 1, 10) AS day, "  # noqa: S608
+            "SUM(cr.estimated_cost_usd) AS total_cost "
+            f"FROM {self._table('cost_records')} cr "
+            f"JOIN {self._table('cost_runs')} r ON cr.cost_run_id = r.id "
+            "WHERE r.connection_name = :connection_name "
+            "AND r.created_at >= :cutoff "
+            "GROUP BY SUBSTR(r.created_at, 1, 10) "
+            "ORDER BY day",
+            {"connection_name": connection_name, "cutoff": cutoff},
+        )
+        return [(r[0], r[1]) for r in rows]
+
+    def _load_cost_records(self, cost_run_id: int) -> list[CostRecord]:
         rows = self._query(
             f"SELECT schema_name, table_name, user_email, "  # noqa: S608
             "total_bytes_billed, estimated_cost_usd, query_count "
-            f"FROM {self._table('cost_snapshot')} WHERE snapshot_id = :snapshot_id",
-            {"snapshot_id": snapshot_id},
+            f"FROM {self._table('cost_records')} WHERE cost_run_id = :cost_run_id",
+            {"cost_run_id": cost_run_id},
         )
         return [
             CostRecord(
@@ -433,6 +474,13 @@ class BaseStateStore(ABC):
 
     # --- Findings ---
 
+    def get_last_check_time(self) -> str | None:
+        """Return the most recent created_at from the findings table, or None."""
+        row = self._query_one(
+            f"SELECT MAX(created_at) FROM {self._table('findings')}"
+        )
+        return row[0] if row and row[0] else None
+
     def store_findings(self, findings: list[Finding]) -> None:
         if not findings:
             return
@@ -491,6 +539,30 @@ class BaseStateStore(ABC):
         )
         logger.debug("Stored %d dbt findings", len(dbt_findings))
 
+    def get_latest_findings(
+        self, connection_name: str | None = None
+    ) -> list[Finding]:
+        """Return findings from the most recent check run only."""
+        last_check = self.get_last_check_time()
+        if not last_check:
+            return []
+        if connection_name is not None:
+            rows = self._query(
+                "SELECT connection_name, check_type, severity, schema_name, "
+                f"table_name, description, details "  # noqa: S608
+                f"FROM {self._table('findings')} "
+                "WHERE created_at = :created_at AND connection_name = :connection_name",
+                {"created_at": last_check, "connection_name": connection_name},
+            )
+        else:
+            rows = self._query(
+                "SELECT connection_name, check_type, severity, schema_name, "
+                f"table_name, description, details "  # noqa: S608
+                f"FROM {self._table('findings')} WHERE created_at = :created_at",
+                {"created_at": last_check},
+            )
+        return self._rows_to_findings(rows)
+
     def get_findings_history(
         self, limit: int = 100, connection_name: str | None = None
     ) -> list[Finding]:
@@ -509,6 +581,9 @@ class BaseStateStore(ABC):
                 f"FROM {self._table('findings')} ORDER BY created_at DESC LIMIT :limit",
                 {"limit": limit},
             )
+        return self._rows_to_findings(rows)
+
+    def _rows_to_findings(self, rows: list[tuple]) -> list[Finding]:
         return [
             Finding(
                 connection_name=r[0],
@@ -522,6 +597,22 @@ class BaseStateStore(ABC):
             for r in rows
         ]
 
+    def get_latest_dbt_findings(self) -> list[DbtFinding]:
+        """Return dbt findings from the most recent check run only."""
+        row = self._query_one(
+            f"SELECT MAX(created_at) FROM {self._table('dbt_findings')}"
+        )
+        last_check = row[0] if row and row[0] else None
+        if not last_check:
+            return []
+        rows = self._query(
+            "SELECT resource_type, severity, unique_id, status, "
+            f"execution_time, description, details "  # noqa: S608
+            f"FROM {self._table('dbt_findings')} WHERE created_at = :created_at",
+            {"created_at": last_check},
+        )
+        return self._rows_to_dbt_findings(rows)
+
     def get_dbt_findings_history(self, limit: int = 100) -> list[DbtFinding]:
         rows = self._query(
             "SELECT resource_type, severity, unique_id, status, "
@@ -529,6 +620,9 @@ class BaseStateStore(ABC):
             f"FROM {self._table('dbt_findings')} ORDER BY created_at DESC LIMIT :limit",
             {"limit": limit},
         )
+        return self._rows_to_dbt_findings(rows)
+
+    def _rows_to_dbt_findings(self, rows: list[tuple]) -> list[DbtFinding]:
         return [
             DbtFinding(
                 resource_type=r[0],

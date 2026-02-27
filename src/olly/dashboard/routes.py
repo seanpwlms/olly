@@ -10,19 +10,18 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from olly.dashboard.charts import (
-    cost_by_table_chart,
-    cost_trend_chart,
-    snapshot_timeline_chart,
+    cost_by_day_chart,
     volume_trend_chart,
 )
 from olly.dashboard.data import (
     filter_findings,
-    get_cost_timeseries,
+    get_cost_daily_timeseries,
     get_critical_findings,
     get_dbt_stats,
     get_findings_by_connection,
     get_findings_by_table,
     get_findings_stats,
+    get_least_used_tables,
     get_schema_diff,
     get_snapshot_history,
     get_stats,
@@ -33,8 +32,8 @@ from olly.dashboard.data import (
     get_volume_stats,
     get_volume_timeseries,
     load_cost_summary,
-    load_dbt_findings,
-    load_findings,
+    load_dbt_findings_from_db,
+    load_findings_from_db,
 )
 from olly.config import load_config
 from olly.state import BaseStateStore, open_state
@@ -70,11 +69,12 @@ def index(request: Request, connection: str = Query("")):
     from olly.dashboard.data import get_all_connections
 
     conn_name = _get_current_connection(connection)
-    findings, generated_at = load_findings()
-    dbt_findings = load_dbt_findings()
     with _state_db(conn_name) as (state_db, conn_name):
-        stats = get_stats(findings, generated_at, state_db, conn_name)
+        findings = load_findings_from_db(state_db)
+        dbt_findings = load_dbt_findings_from_db(state_db)
+        stats = get_stats(findings, state_db, conn_name)
     dbt_stats = get_dbt_stats(dbt_findings)
+    dbt_issue_findings = [f for f in dbt_findings if f.severity != "pass"]
 
     check_types = sorted({f.check_type for f in findings})
     severities = sorted({f.severity for f in findings})
@@ -102,7 +102,7 @@ def index(request: Request, connection: str = Query("")):
         {
             "stats": stats,
             "dbt_stats": dbt_stats,
-            "dbt_findings": dbt_findings,
+            "dbt_findings": dbt_issue_findings,
             "findings": findings,
             "check_breakdown": check_breakdown,
             "check_types": check_types,
@@ -129,7 +129,9 @@ def findings_page(
     from olly.dashboard.data import get_all_connections
 
     conn_name = _get_current_connection(connection)
-    findings, generated_at = load_findings()
+    with _state_db(conn_name) as (state_db, conn_name):
+        findings = load_findings_from_db(state_db)
+        last_check_time = state_db.get_last_check_time()
 
     # Apply filters
     filtered_findings = filter_findings(
@@ -155,7 +157,7 @@ def findings_page(
     ctx = {
         "findings": page_findings,
         "stats": stats,
-        "generated_at": generated_at,
+        "generated_at": last_check_time,
         "check_type": check_type,
         "severity": severity,
         "schema_name": schema_name,
@@ -188,32 +190,12 @@ def history_page(
 
     with _state_db(conn_name) as (state_db, conn_name):
         snapshots = get_snapshot_history(state_db, days, conn_name)
-        cost_ts = get_cost_timeseries(state_db, days, conn_name)
-
-    # Prepare chart specs
-    snapshot_chart_spec = None
-    if snapshots:
-        snapshot_data = [
-            {
-                "snapshot_id": s.snapshot_id,
-                "created_at": s.created_at,
-                "table_count": s.table_count,
-            }
-            for s in snapshots
-        ]
-        snapshot_chart_spec = json.dumps(snapshot_timeline_chart(snapshot_data))
-
-    cost_chart_spec = None
-    if cost_ts:
-        cost_chart_spec = json.dumps(cost_trend_chart(cost_ts))
 
     return templates.TemplateResponse(
         request,
         "history.html",
         {
             "snapshots": snapshots,
-            "snapshot_chart_spec": snapshot_chart_spec,
-            "cost_chart_spec": cost_chart_spec,
             "days": days,
             "connections": get_all_connections(),
             "current_connection": conn_name,
@@ -229,23 +211,10 @@ def api_findings(
     schema_name: str = Query("", alias="schema"),
     q: str = Query("", alias="q"),
 ):
-    findings, _ = load_findings()
+    with _state_db() as (state_db, _conn):
+        findings = load_findings_from_db(state_db)
 
-    if check_type:
-        findings = [f for f in findings if f.check_type == check_type]
-    if severity:
-        findings = [f for f in findings if f.severity == severity]
-    if schema_name:
-        findings = [f for f in findings if f.schema_name == schema_name]
-    if q:
-        needle = q.lower()
-        findings = [
-            f
-            for f in findings
-            if needle in f.description.lower()
-            or needle in f.table_name.lower()
-            or needle in f.schema_name.lower()
-        ]
+    findings = filter_findings(findings, check_type, severity, schema_name, q=q)
 
     return templates.TemplateResponse(
         request,
@@ -259,14 +228,17 @@ def usage(request: Request, connection: str = Query("")):
     from olly.dashboard.data import get_all_connections
 
     conn_name = _get_current_connection(connection)
-    findings, _ = load_findings()
+    with _state_db(conn_name) as (state_db, conn_name):
+        findings = load_findings_from_db(state_db)
+        cost_daily = get_cost_daily_timeseries(state_db, days=30, connection_name=conn_name)
+        least_used = get_least_used_tables(state_db, conn_name)
     cost_summary = load_cost_summary()
     usage_findings = get_usage_findings(findings)
     stats = get_usage_stats(usage_findings, cost_summary)
 
-    chart_spec = None
-    if cost_summary and cost_summary.get("top_tables"):
-        chart_spec = json.dumps(cost_by_table_chart(cost_summary["top_tables"]))
+    cost_daily_chart_spec = None
+    if cost_daily:
+        cost_daily_chart_spec = json.dumps(cost_by_day_chart(cost_daily))
 
     return templates.TemplateResponse(
         request,
@@ -275,7 +247,8 @@ def usage(request: Request, connection: str = Query("")):
             "stats": stats,
             "usage_findings": usage_findings,
             "cost_summary": cost_summary,
-            "chart_spec": chart_spec,
+            "cost_daily_chart_spec": cost_daily_chart_spec,
+            "least_used": least_used,
             "connections": get_all_connections(),
             "current_connection": conn_name,
         },
@@ -287,7 +260,8 @@ def dbt(request: Request, connection: str = Query("")):
     from olly.dashboard.data import get_all_connections
 
     conn_name = _get_current_connection(connection)
-    dbt_findings = load_dbt_findings()
+    with _state_db(conn_name) as (state_db, _conn):
+        dbt_findings = load_dbt_findings_from_db(state_db)
     dbt_stats = get_dbt_stats(dbt_findings)
 
     resource_types = sorted({f.resource_type for f in dbt_findings})
@@ -313,7 +287,8 @@ def api_dbt_findings(
     resource_type: str = Query("", alias="resource_type"),
     severity: str = Query("", alias="severity"),
 ):
-    dbt_findings = load_dbt_findings()
+    with _state_db() as (state_db, _conn):
+        dbt_findings = load_dbt_findings_from_db(state_db)
 
     if resource_type:
         dbt_findings = [f for f in dbt_findings if f.resource_type == resource_type]
@@ -332,12 +307,12 @@ def table_detail(request: Request, schema: str, table: str, connection: str = Qu
     from olly.dashboard.data import get_all_connections
 
     conn_name = _get_current_connection(connection)
-    findings, _ = load_findings()
-    table_findings = [
-        f for f in findings if f.schema_name == schema and f.table_name == table
-    ]
 
     with _state_db(conn_name) as (state_db, conn_name):
+        findings = load_findings_from_db(state_db)
+        table_findings = [
+            f for f in findings if f.schema_name == schema and f.table_name == table
+        ]
         table_info = get_table_info(state_db, schema, table, conn_name)
         timeseries = get_volume_timeseries(state_db, schema, table, connection_name=conn_name)
         chart_spec = volume_trend_chart(timeseries) if timeseries else None
@@ -441,10 +416,9 @@ def tables(
     conn_name = _get_current_connection(connection)
 
     # Load findings for status indicators
-    findings, _ = load_findings()
-    findings_by_table_map = get_findings_by_table(findings)
-
     with _state_db(conn_name) as (state_db, conn_name):
+        findings = load_findings_from_db(state_db)
+        findings_by_table_map = get_findings_by_table(findings)
         table_rows = _build_table_rows(state_db, conn_name, findings_by_table_map)
 
     page_rows, total = _filter_sort_paginate(table_rows, search, sort, order, page)

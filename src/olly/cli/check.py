@@ -62,8 +62,12 @@ def print_findings_table(findings: list[Finding]) -> None:
 
 
 def print_dbt_findings_table(dbt_findings: list[DbtFinding]) -> None:
-    """Render dbt findings as a Rich table to the console."""
-    if not dbt_findings:
+    """Render dbt findings as a Rich table to the console.
+
+    Only shows issues (non-pass findings). Pass findings are excluded.
+    """
+    issues = [f for f in dbt_findings if f.severity != "pass"]
+    if not issues:
         return
 
     table = Table(title="dbt Findings", show_lines=True)
@@ -73,7 +77,7 @@ def print_dbt_findings_table(dbt_findings: list[DbtFinding]) -> None:
     table.add_column("Time (s)", justify="right", width=10)
     table.add_column("Description")
 
-    for f in dbt_findings:
+    for f in issues:
         severity_style = "red bold" if f.severity == "error" else "yellow"
         table.add_row(
             f.resource_type,
@@ -100,25 +104,6 @@ def print_cost_summary(records: list[CostRecord]) -> None:
     console.print(
         f"\n[bold]Estimated BigQuery Cost:[/bold] ${summary['total_cost_usd']:.2f}"
     )
-
-    if summary["top_tables"]:
-        table = Table(title="Top Tables by Cost", show_lines=True)
-        table.add_column("Table", style="blue")
-        table.add_column("Cost (USD)", justify="right")
-        for entry in summary["top_tables"]:
-            table.add_row(
-                f"{entry['schema']}.{entry['table']}",
-                f"${entry['cost_usd']:.2f}",
-            )
-        console.print(table)
-
-    if summary["top_users"]:
-        table = Table(title="Top Users by Cost", show_lines=True)
-        table.add_column("User", style="blue")
-        table.add_column("Cost (USD)", justify="right")
-        for entry in summary["top_users"]:
-            table.add_row(entry["user"], f"${entry['cost_usd']:.2f}")
-        console.print(table)
 
 
 def print_findings_json(
@@ -187,27 +172,29 @@ def run_check(
 
     send_slack_alert(config.slack, findings, dbt_findings)
 
+    dbt_issues = [f for f in dbt_findings if f.severity != "pass"]
+
     if output_json:
         print_findings_json(findings, dbt_findings, cost_records)
     else:
-        if not findings and not dbt_findings:
+        if not findings and not dbt_issues:
             console.print("[bold green]All checks passed.[/bold green]")
         print_findings_table(findings)
         print_dbt_findings_table(dbt_findings)
         print_cost_summary(cost_records)
 
-        if findings or dbt_findings:
+        if findings or dbt_issues:
             parts = []
             error_count = sum(1 for f in findings if f.severity == "error")
             warn_count = sum(1 for f in findings if f.severity == "warning")
             if findings:
                 parts.append(f"{error_count} error(s), {warn_count} warning(s)")
-            if dbt_findings:
-                dbt_errors = sum(1 for f in dbt_findings if f.severity == "error")
-                dbt_warns = sum(1 for f in dbt_findings if f.severity == "warning")
+            if dbt_issues:
+                dbt_errors = sum(1 for f in dbt_issues if f.severity == "error")
+                dbt_warns = sum(1 for f in dbt_issues if f.severity == "warning")
                 parts.append(f"{dbt_errors} dbt error(s), {dbt_warns} dbt warning(s)")
             if parts:
                 console.print("\n" + " — ".join(parts))
 
-    if findings or dbt_findings:
+    if findings or dbt_issues:
         sys.exit(1)

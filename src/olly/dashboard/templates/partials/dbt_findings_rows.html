@@ -1,5 +1,6 @@
-{% if dbt_findings %}
-{% for f in dbt_findings %}
+{% set issue_findings = dbt_findings|selectattr("severity", "ne", "pass")|list %}
+{% if issue_findings %}
+{% for f in issue_findings %}
 <tr>
     <td><span class="badge badge-{{ f.severity }}">{{ f.severity }}</span></td>
     <td>{{ f.resource_type }}</td>
@@ -24,5 +25,5 @@
 </tr>
 {% endfor %}
 {% else %}
-<tr><td colspan="6" class="empty-state">No dbt findings</td></tr>
+<tr><td colspan="6" class="empty-state">No dbt issues</td></tr>
 {% endif %}

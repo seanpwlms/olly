@@ -438,7 +438,7 @@ class TestFetchRowCounts:
         ]
         assert adapter.fetch_row_counts(infos) == []
 
-    def test_info_schema_missing_row_count_raises(self):
+    def test_info_schema_missing_row_count_skips(self):
         adapter = _make_adapter(
             raw_sql_rows=[
                 [("other_table", "BASE TABLE", 10)],
@@ -453,8 +453,8 @@ class TestFetchRowCounts:
                 columns=[],
             ),
         ]
-        with pytest.raises(RuntimeError, match="Missing row count"):
-            adapter.fetch_row_counts(infos)
+        result = adapter.fetch_row_counts(infos)
+        assert result == []
 
     def test_count_star_error_raises(self):
         adapter = _make_error_adapter()

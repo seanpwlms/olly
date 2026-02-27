@@ -66,18 +66,43 @@
     {% endif %}
 </section>
 
+{% if least_used %}
+<section>
+    <h2>Top 10 Least Used Tables</h2>
+    <table class="findings-table">
+        <thead>
+            <tr>
+                <th>Table</th>
+                <th>Query Count</th>
+                <th>Cost (USD)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for t in least_used %}
+            <tr>
+                <td><a href="/table/{{ t.schema_name }}/{{ t.table_name }}">{{ t.schema_name }}.{{ t.table_name }}</a></td>
+                <td>{{ t.query_count }}</td>
+                <td>${{ "%.2f"|format(t.estimated_cost_usd) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
 {% if cost_summary %}
 <section>
     <h2>Cost Breakdown</h2>
 
-    {% if chart_spec %}
+    {% if cost_daily_chart_spec %}
     <div class="chart-section">
-        <h2>Top Tables by Cost</h2>
-        <div id="cost-chart"></div>
+        <h3>Cost by Day (Last 30 Days)</h3>
+        <div id="cost-daily-chart"></div>
     </div>
     {% endif %}
 
     {% if cost_summary.top_tables %}
+    <h3>Top Tables by Cost</h3>
     <table class="findings-table">
         <thead>
             <tr>
@@ -97,7 +122,7 @@
     {% endif %}
 
     {% if cost_summary.top_users %}
-    <h2>Top Users by Cost</h2>
+    <h3>Top Users by Cost</h3>
     <table class="findings-table">
         <thead>
             <tr>
@@ -117,9 +142,9 @@
     {% endif %}
 </section>
 
-{% if chart_spec %}
+{% if cost_daily_chart_spec %}
 <script>
-    vegaEmbed('#cost-chart', {{ chart_spec|safe }}, {actions: false});
+    vegaEmbed('#cost-daily-chart', {{ cost_daily_chart_spec|safe }}, {actions: false});
 </script>
 {% endif %}
 {% endif %}

@@ -35,7 +35,7 @@ def match_pattern(pattern: str, value: str) -> bool:
     if pattern == "*":
         return True
     regex = "^" + re.escape(pattern).replace("\\*", ".*") + "$"
-    return re.match(regex, value) is not None
+    return re.match(regex, value, re.IGNORECASE) is not None
 
 
 def match_table_pattern(pattern: str, schema: str, table: str) -> bool:

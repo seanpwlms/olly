@@ -51,8 +51,10 @@ def run_checks(
 
     connections = resolve_connections(config, connection_name)
 
+    last_backend = None
     for name, nc in connections:
         backend = adapter if adapter is not None else connect_typed(nc.connection)
+        last_backend = backend
 
         schemas = select_schema_names(nc.selection, backend.list_schemas())
 
@@ -76,8 +78,7 @@ def run_checks(
                 findings.extend(cost_findings)
                 cost_records.extend(conn_cost_records)
                 if conn_cost_records:
-                    snap_id = state_db.create_snapshot(connection_name=name)
-                    state_db.store_cost_data(snap_id, conn_cost_records)
+                    state_db.store_cost_data(conn_cost_records, connection_name=name)
 
             # Skip snapshot-based checks if we don't have at least 2 snapshots
             if not state_db.has_multiple_snapshots(connection_name=name):
@@ -154,9 +155,9 @@ def run_checks(
     logger.debug("Running dbt checks")
     dbt_findings = _run_dbt_checks(config)
 
-    # Store all findings in a single state scope
+    # Store all findings in the correct state store (warehouse or SQLite)
     if findings or dbt_findings:
-        with open_state(config) as state_db:
+        with open_state(config, last_backend) as state_db:
             state_db.store_findings(findings)
             state_db.store_dbt_findings(dbt_findings)
 
@@ -168,6 +169,7 @@ def run_checks(
 def _run_dbt_checks(config: OllyConfig) -> list[DbtFinding]:
     """Run dbt checks if configured."""
     if not config.dbt.run_results_path:
+        logger.info("No dbt.run_results_path configured, skipping dbt checks")
         return []
     run_results_path = Path(config.dbt.run_results_path)
     if not run_results_path.is_absolute() and config.config_path is not None:

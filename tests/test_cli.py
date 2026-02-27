@@ -13,7 +13,7 @@ from olly.cli.check import (
 )
 from olly.cli.config_explain import run_config_explain
 from olly.cli.init import run_init
-from olly.cli.snapshot import take_snapshot
+from olly.cli.snapshot import _table_list, take_snapshot
 from olly.config import (
     ConnectionConfig,
     DbtConfig,
@@ -50,6 +50,52 @@ def test_run_snapshot_and_check(tmp_path, monkeypatch, duckdb_path):
     take_snapshot(config)
     take_snapshot(config)
     run_check(output_json=True, write_results=False)
+
+
+def test_snapshot_progress_output(tmp_path, monkeypatch, duckdb_path):
+    """take_snapshot with progress_console prints step-by-step status."""
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(tmp_path / "olly.toml", duckdb_path)
+
+    from io import StringIO
+
+    from rich.console import Console
+
+    buf = StringIO()
+    test_console = Console(file=buf, no_color=True)
+    results = take_snapshot(config, progress_console=test_console)
+
+    output = buf.getvalue()
+    assert "Connected" in output
+    assert "schema" in output.lower()
+    assert "table" in output.lower()
+    assert "Row counts collected" in output
+    assert "Saving snapshot" in output
+    assert len(results) == 1
+
+
+def test_table_list_short():
+    """_table_list formats a short list without truncation."""
+
+    class FakeTable:
+        def __init__(self, name):
+            self.table_name = name
+
+    tables = [FakeTable("a"), FakeTable("b"), FakeTable("c")]
+    assert _table_list(tables) == "a, b, c"
+
+
+def test_table_list_truncated():
+    """_table_list truncates when there are more than _MAX_TABLE_NAMES tables."""
+
+    class FakeTable:
+        def __init__(self, name):
+            self.table_name = name
+
+    tables = [FakeTable(f"t{i}") for i in range(12)]
+    result = _table_list(tables)
+    assert "+4 more" in result
+    assert result.startswith("t0, t1")
 
 
 def test_run_config_explain(tmp_path, monkeypatch, duckdb_path, capsys):
@@ -335,3 +381,37 @@ def test_run_check_passes_findings_to_slack(tmp_path, monkeypatch, duckdb_path):
             # args: (config.slack, findings, dbt_findings)
             assert args[1] == [fake_finding]
             assert args[2] == []
+
+
+def test_run_clean_deletes_state(tmp_path, monkeypatch, duckdb_path):
+    from olly.cli.clean import run_clean
+
+    monkeypatch.chdir(tmp_path)
+    config = _write_config(tmp_path / "olly.toml", duckdb_path)
+    take_snapshot(config)
+
+    state_dir = get_olly_dir(tmp_path)
+    assert (state_dir / "state.db").exists()
+
+    run_clean(yes=True)
+    assert not (state_dir / "state.db").exists()
+
+
+def test_run_clean_warehouse_state_noop(tmp_path, monkeypatch, duckdb_path, capsys):
+    from olly.cli.clean import run_clean
+
+    monkeypatch.chdir(tmp_path)
+    nc = NamedConnection(
+        name="primary",
+        connection=ConnectionConfig(type="duckdb", path=str(duckdb_path)),
+        selection=Selection(include_schemas=["main"]),
+    )
+    config = OllyConfig(
+        connections={"primary": nc},
+        settings=Settings(state_schema="olly_state"),
+    )
+    write_config(config, tmp_path / "olly.toml")
+
+    run_clean(yes=True)
+    captured = capsys.readouterr()
+    assert "warehouse" in captured.out.lower()

@@ -175,8 +175,7 @@ def test_cost_data(wss):
         estimated_cost_usd=5.0,
         query_count=3,
     )
-    sid = wss.create_snapshot()
-    wss.store_cost_data(sid, [record])
+    wss.store_cost_data([record])
 
     latest = wss.get_latest_cost()
     assert len(latest) == 1
@@ -185,8 +184,7 @@ def test_cost_data(wss):
 
 def test_cost_history(wss):
     for cost in [1.0, 2.0, 3.0]:
-        sid = wss.create_snapshot()
-        wss.store_cost_data(sid, [CostRecord("main", "t", "u@e.com", 100, cost, 1)])
+        wss.store_cost_data([CostRecord("main", "t", "u@e.com", 100, cost, 1)])
 
     history = wss.get_cost_history(depth=10)
     assert len(history) == 3
@@ -250,7 +248,7 @@ def test_store_empty_lists(wss):
     sid = wss.create_snapshot()
     wss.store_schema_data(sid, [])
     wss.store_volume_data(sid, [])
-    wss.store_cost_data(sid, [])
+    wss.store_cost_data([])
     assert wss.has_snapshots()
 
 
@@ -336,14 +334,14 @@ def test_connection_name_isolates_volume_history(wss):
 
 def test_connection_name_isolates_cost(wss):
     """Cost data is isolated by connection_name."""
-    sid_prod = wss.create_snapshot(connection_name="prod")
     wss.store_cost_data(
-        sid_prod, [CostRecord("main", "t", "u@e.com", 100, 50.0, 1)]
+        [CostRecord("main", "t", "u@e.com", 100, 50.0, 1)],
+        connection_name="prod",
     )
 
-    sid_staging = wss.create_snapshot(connection_name="staging")
     wss.store_cost_data(
-        sid_staging, [CostRecord("main", "t", "u@e.com", 10, 1.0, 1)]
+        [CostRecord("main", "t", "u@e.com", 10, 1.0, 1)],
+        connection_name="staging",
     )
 
     prod_cost = wss.get_latest_cost(connection_name="prod")
@@ -360,11 +358,15 @@ def test_connection_name_isolates_cost(wss):
 def test_connection_name_isolates_cost_history(wss):
     """Cost history is scoped to connection_name."""
     for cost in [1.0, 2.0]:
-        sid = wss.create_snapshot(connection_name="prod")
-        wss.store_cost_data(sid, [CostRecord("main", "t", "u@e.com", 100, cost, 1)])
+        wss.store_cost_data(
+            [CostRecord("main", "t", "u@e.com", 100, cost, 1)],
+            connection_name="prod",
+        )
 
-    sid = wss.create_snapshot(connection_name="staging")
-    wss.store_cost_data(sid, [CostRecord("main", "t", "u@e.com", 10, 99.0, 1)])
+    wss.store_cost_data(
+        [CostRecord("main", "t", "u@e.com", 10, 99.0, 1)],
+        connection_name="staging",
+    )
 
     prod_history = wss.get_cost_history(depth=10, connection_name="prod")
     assert len(prod_history) == 2
