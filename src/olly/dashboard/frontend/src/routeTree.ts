@@ -22,6 +22,8 @@ export type FindingsSearch = {
   schema?: string;
   q?: string;
   page?: number;
+  tab?: string;
+  view?: string;
 };
 
 export type TablesSearch = {
@@ -59,6 +61,8 @@ export const findingsRoute = createRoute({
     schema: (search.schema as string) || undefined,
     q: (search.q as string) || undefined,
     page: Number(search.page) || undefined,
+    tab: (search.tab as string) || undefined,
+    view: (search.view as string) || undefined,
   }),
 });
 
