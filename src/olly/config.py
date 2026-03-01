@@ -30,6 +30,7 @@ class Override:
     freshness_column: str | None = None
     freshness_threshold_hours: float | None = None
     volume_zscore_threshold: float | None = None
+    volume_method: str | None = None
 
 
 @dataclass
@@ -70,6 +71,7 @@ class Settings:
 
     history_depth: int = 30
     volume_zscore_threshold: float = 3.0
+    volume_method: str = "ewma"
     freshness_threshold_hours: float = 24.0
     min_history_for_anomaly: int = 5
     write_results: bool = True
@@ -144,7 +146,6 @@ class OllyConfig:
 
     connections: dict[str, NamedConnection] = field(default_factory=dict)
     settings: Settings = field(default_factory=Settings)
-    sources: dict[str, str] = field(default_factory=dict)
     integrity: IntegrityConfig = field(default_factory=IntegrityConfig)
     contracts: ContractsConfig = field(default_factory=ContractsConfig)
     dbt: DbtConfig = field(default_factory=DbtConfig)
@@ -161,9 +162,11 @@ class ResolvedTableSettings:
     freshness_column: str | None
     freshness_threshold_hours: float
     volume_zscore_threshold: float
+    volume_method: str
     freshness_column_source: str
     freshness_threshold_hours_source: str
     volume_zscore_threshold_source: str
+    volume_method_source: str
 
 
 class ConfigError(Exception):
@@ -282,17 +285,12 @@ def load_config(path: Path | None = None) -> OllyConfig:
     settings = Settings(
         history_depth=settings_raw.get("history_depth", 30),
         volume_zscore_threshold=settings_raw.get("volume_zscore_threshold", 3.0),
+        volume_method=settings_raw.get("volume_method", "ewma"),
         freshness_threshold_hours=settings_raw.get("freshness_threshold_hours", 24.0),
         min_history_for_anomaly=settings_raw.get("min_history_for_anomaly", 5),
         write_results=settings_raw.get("write_results", True),
         state_schema=settings_raw.get("state_schema"),
     )
-
-    sources = {}
-    for name, connection_string in raw.get("sources", {}).items():
-        if connection_string is None:
-            continue
-        sources[str(name)] = str(connection_string)
 
     integrity_raw = raw.get("integrity", {})
     integrity = IntegrityConfig(module=integrity_raw.get("module"))
@@ -335,7 +333,6 @@ def load_config(path: Path | None = None) -> OllyConfig:
     config = OllyConfig(
         connections=connections,
         settings=settings,
-        sources=sources,
         integrity=integrity,
         contracts=contracts,
         dbt=dbt,
@@ -393,6 +390,7 @@ def _parse_overrides_section(overrides_raw: list, context: str) -> list[Override
                 freshness_column=o.get("freshness_column"),
                 freshness_threshold_hours=o.get("freshness_threshold_hours"),
                 volume_zscore_threshold=o.get("volume_zscore_threshold"),
+                volume_method=o.get("volume_method"),
             )
         )
     return overrides
@@ -461,7 +459,6 @@ def _config_to_dict(config: OllyConfig) -> dict:
     data: dict = {
         "connections": connections_dict,
         "settings": settings_dict,
-        "sources": dict(config.sources),
     }
 
     if config.integrity.module:

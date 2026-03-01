@@ -205,6 +205,11 @@ def format_explain(result: ExplainResult) -> str:
                     f"volume_zscore_threshold: {settings.volume_zscore_threshold} "
                     f"({settings.volume_zscore_threshold_source})"
                 )
+                lines.append(
+                    "    "
+                    f"volume_method: {settings.volume_method} "
+                    f"({settings.volume_method_source})"
+                )
         else:
             lines.append("  <none>")
 

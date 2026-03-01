@@ -23,6 +23,13 @@ class Disposition(str, Enum):
     COMPLETED = "completed"
 
 
+class VolumeMethod(str, Enum):
+    """Method used for volume anomaly detection."""
+
+    EWMA = "ewma"
+    ZSCORE = "zscore"
+
+
 class IntegrityMethod(str, Enum):
     """Comparison method used for cross-source integrity checks."""
 

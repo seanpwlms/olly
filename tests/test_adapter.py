@@ -1,6 +1,4 @@
-import pytest
-
-from olly.adapter import connect_typed, connect_connection_string
+from olly.adapter import connect_typed
 from olly.config import Selection
 from olly.config_ops import filter_table_infos
 
@@ -162,11 +160,3 @@ def test_duckdb_extras_forwarded(monkeypatch):
     connect_typed(conn)
     assert len(constructed_with) == 1
     assert constructed_with[0]["read_only"] is True
-
-
-def test_connect_unsupported_connection_string():
-    """Unsupported prefix raises ConfigError."""
-    from olly.config import ConfigError
-
-    with pytest.raises(ConfigError, match="Cannot parse legacy connection string"):
-        connect_connection_string("mysql://localhost/db")

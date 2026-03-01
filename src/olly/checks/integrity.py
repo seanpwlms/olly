@@ -6,7 +6,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from olly._import import import_module_spec
-from olly.adapter import connect_connection_string
+from olly.adapter import connect_typed
+from olly.config import NamedConnection
 from olly.models import Finding, IntegrityMethod, Sync, WindowOp
 
 logger = logging.getLogger(__name__)
@@ -42,7 +43,7 @@ def load_syncs(module_spec: str, config_path: Path | None = None) -> list[Sync]:
 def run_syncs(
     syncs: list[Sync],
     *,
-    sources: dict[str, str] | None,
+    connections: dict[str, NamedConnection],
 ) -> list[Finding]:
     """Run cross-source integrity checks for configured syncs.
 
@@ -51,28 +52,28 @@ def run_syncs(
 
     Args:
         syncs: Sync definitions to evaluate.
-        sources: Mapping of source names to connection strings.
+        connections: Mapping of connection names to NamedConnection objects.
 
     Returns:
         A list of findings for syncs where source/target data diverges.
 
     Raises:
-        ValueError: If sources are missing, syncs lack required fields,
+        ValueError: If connections are missing, syncs lack required fields,
             or an unsupported method is specified.
     """
     if not syncs:
         return []
     logger.debug("Running %d integrity syncs", len(syncs))
-    if not sources:
-        raise ValueError("Integrity checks require sources to be provided.")
+    if not connections:
+        raise ValueError("Integrity checks require connections to be provided.")
 
     findings: list[Finding] = []
     for pipeline in syncs:
-        source_cs = sources.get(pipeline.source)
-        target_cs = sources.get(pipeline.target)
-        if not source_cs or not target_cs:
+        source_nc = connections.get(pipeline.source)
+        target_nc = connections.get(pipeline.target)
+        if not source_nc or not target_nc:
             raise ValueError(
-                f"Integrity pipeline '{pipeline.name}' references unknown sources."
+                f"Integrity pipeline '{pipeline.name}' references unknown connections."
             )
         if pipeline.window is None:
             raise ValueError(
@@ -96,8 +97,8 @@ def run_syncs(
                 f"'{pipeline.method.value}'."
             )
 
-        source_backend = connect_connection_string(source_cs)
-        target_backend = connect_connection_string(target_cs)
+        source_backend = connect_typed(source_nc.connection)
+        target_backend = connect_typed(target_nc.connection)
         source_schema, source_table = _parse_table_ref(pipeline.source_table)
         target_schema, target_table = _parse_table_ref(pipeline.target_table)
 

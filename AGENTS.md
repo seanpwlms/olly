@@ -35,7 +35,7 @@ CLI is a thin wrapper (`src/olly/__init__.py` → `src/olly/cli/`). All logic li
 - `explain.py` — config introspection / explanation output
 - `results.py` — result formatting helpers
 - `checks/schema.py` — schema diff detection (tables, columns, types, nullability)
-- `checks/volume.py` — z-score based row count anomaly detection
+- `checks/volume.py` — row count anomaly detection via EWMA (default) or z-score
 - `checks/freshness.py` — timestamp freshness + row-count staleness proxy
 - `checks/integrity.py` — cross-source data integrity syncs (`load_syncs`, `run_syncs`; methods: COUNT, HASH, PK, COUNT_DISTINCT)
 - `checks/contracts.py` — validate warehouse schema against declared contracts
@@ -150,11 +150,11 @@ All tests use `tmp_path` / `monkeypatch` for isolation — no shared state. Fixt
 
 After any implementation change, run all checks and report results in this format:
 
-- ✅ Tests: 116 passing (`uv run pytest tests/`)
+- ✅ Tests: passing (`uv run pytest tests/`)
 - ✅ Lint: `uv run ruff check` clean
 - ✅ Types: `uv run ty check` clean
 - ✅ Loq: `uv run loq check` clean
-- ✅ Coverage: 77% (`uv run pytest tests/ --cov=olly --cov-report=term-missing -q`)
+- ✅ Coverage: above 80% (`uv run pytest tests/ --cov=olly --cov-report=term-missing -q`)
 
 If any tests fail, fix them before printing the results. Do not print the checklist with failures.
 

@@ -124,25 +124,3 @@ def connect_typed(conn: ConnectionConfig) -> Adapter:
             **conn.extras,
         )
     raise ValueError(f"Unsupported connection type: {conn.type}")
-
-
-def connect_connection_string(connection_string: str) -> Adapter:
-    """Create a warehouse adapter from a raw connection string.
-
-    Used by integrity checks which operate on raw source/target connection
-    strings. Parses the URL prefix to determine the adapter type and
-    extracts typed fields from the URL.
-
-    Args:
-        connection_string: A prefixed connection string.
-
-    Returns:
-        An ``Adapter`` instance connected to the specified warehouse.
-
-    Raises:
-        ValueError: If the connection string prefix is not recognized.
-    """
-    from olly.config import _parse_legacy_connection_string
-
-    conn = _parse_legacy_connection_string(connection_string)
-    return connect_typed(conn)

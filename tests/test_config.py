@@ -44,10 +44,6 @@ def test_write_and_load_roundtrip(tmp_path):
     )
     config = OllyConfig(
         connections={"primary": nc},
-        sources={
-            "prod": "postgres://example/db",
-            "analytics": "bigquery://proj.dataset",
-        },
         integrity=IntegrityConfig(module="pipelines.py"),
         settings=Settings(
             history_depth=10,
@@ -70,7 +66,6 @@ def test_write_and_load_roundtrip(tmp_path):
     assert len(loaded.connections["primary"].overrides) == 1
     assert loaded.connections["primary"].overrides[0].match == "main.orders"
     assert loaded.connections["primary"].overrides[0].freshness_column == "updated_at"
-    assert loaded.sources["prod"] == "postgres://example/db"
     assert loaded.integrity.module == "pipelines.py"
 
 
@@ -94,7 +89,6 @@ def test_load_config_defaults(tmp_path):
     ]
     assert loaded.connections["primary"].selection.include_tables == ["*.*"]
     assert loaded.connections["primary"].selection.exclude_tables == []
-    assert loaded.sources == {}
     assert loaded.integrity.module is None
 
 
