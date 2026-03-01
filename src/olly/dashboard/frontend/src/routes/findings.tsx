@@ -87,6 +87,7 @@ function QualityContent({
   const checkType = search.check_type ?? "";
   const severity = search.severity ?? "";
   const schema = search.schema ?? "";
+  const disposition = search.disposition ?? "";
   const q = search.q ?? "";
   const page = search.page ?? 1;
   const view = search.view === "flat" ? "flat" : "grouped";
@@ -96,6 +97,7 @@ function QualityContent({
     check_type: checkType,
     severity,
     schema,
+    disposition,
     q,
     page,
   });
@@ -105,7 +107,7 @@ function QualityContent({
 
   const { findings, stats, filters, total_pages, total, last_check_time } = data;
 
-  const hasFilters = !!(checkType || severity || schema || q);
+  const hasFilters = !!(checkType || severity || schema || disposition || q);
   const isHealthy = stats.error_count === 0 && stats.warning_count === 0 && !hasFilters;
 
   return (
@@ -124,6 +126,8 @@ function QualityContent({
           <StatCard value={stats.total_count} label="Total Findings" />
           <StatCard value={stats.error_count} label="Errors" variant="error" />
           <StatCard value={stats.warning_count} label="Warnings" variant="warning" />
+          <StatCard value={stats.in_progress_count} label="In Progress" />
+          <StatCard value={stats.completed_count} label="Completed" />
         </StatsRow>
       )}
 
@@ -183,6 +187,18 @@ function QualityContent({
               {filters.schemas.map((s) => (
                 <option key={s} value={s}>
                   {s}
+                </option>
+              ))}
+            </select>
+            <select
+              className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
+              value={disposition}
+              onChange={(e) => setFilter({ disposition: e.target.value || undefined })}
+            >
+              <option value="">All statuses</option>
+              {(filters.dispositions ?? []).map((d) => (
+                <option key={d} value={d}>
+                  {d.replace("_", " ")}
                 </option>
               ))}
             </select>

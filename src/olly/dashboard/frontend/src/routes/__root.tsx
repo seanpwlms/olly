@@ -2,6 +2,7 @@ import { Outlet, Link, useRouterState } from "@tanstack/react-router";
 import { useConnections } from "../hooks/queries";
 import { useConnection } from "../hooks/useConnection";
 import { useTheme } from "../hooks/useTheme";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 function ThemeToggle() {
   const { theme, setTheme } = useTheme();
@@ -30,6 +31,9 @@ export function RootLayout() {
   const navLinks = [
     { to: "/findings", label: "Findings" },
     { to: "/tables", label: "Tables" },
+    { to: "/contracts", label: "Contracts" },
+    { to: "/integrity", label: "Integrity" },
+    { to: "/usage", label: "Usage" },
   ] as const;
 
   return (
@@ -52,16 +56,7 @@ export function RootLayout() {
               {link.label}
             </Link>
           ))}
-          <Link
-            to="/usage"
-            className={`ml-auto text-xs no-underline transition-colors ${
-              currentPath === "/usage"
-                ? "text-white"
-                : "text-gray-500 hover:text-gray-300"
-            }`}
-          >
-            Usage
-          </Link>
+          <div className="ml-auto" />
           <ThemeToggle />
           {connections.length > 1 && (
             <select
@@ -79,7 +74,9 @@ export function RootLayout() {
         </nav>
       </header>
       <main className="max-w-6xl mx-auto px-6 py-8">
-        <Outlet />
+        <ErrorBoundary>
+          <Outlet />
+        </ErrorBoundary>
       </main>
     </div>
   );

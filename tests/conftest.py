@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import duckdb
 import pytest
 
@@ -156,13 +158,14 @@ def make_finding(check_type="schema", severity="error", **kwargs):
     """
     from olly.models import Finding
 
-    defaults = {
+    defaults: dict[str, Any] = {
         "schema_name": "main",
         "table_name": "orders",
         "description": "Test finding",
         "connection_name": "primary",
     }
-    return Finding(check_type=check_type, severity=severity, **{**defaults, **kwargs})
+    defaults.update(kwargs)
+    return Finding(check_type=check_type, severity=severity, **defaults)
 
 
 def make_volume_record(schema="main", table="orders", count=100):
@@ -234,11 +237,12 @@ def make_config(
         overrides=overrides,
     )
 
-    defaults = {
+    defaults: dict[str, Any] = {
         "connections": {"primary": nc},
         "settings": Settings(),
     }
-    return OllyConfig(**{**defaults, **kwargs})
+    defaults.update(kwargs)
+    return OllyConfig(**defaults)
 
 
 class FakeAdapter:
@@ -284,3 +288,50 @@ class FakeAdapter:
 def fake_adapter():
     """Fixture providing a FakeAdapter instance."""
     return FakeAdapter()
+
+
+@pytest.fixture
+def dashboard_client(tmp_path, monkeypatch):
+    """TestClient with findings and state seeded in tmp_path.
+
+    Seeds: 1 schema error + 1 volume warning on main.orders, plus a snapshot
+    with schema and volume data.
+    """
+    from olly.models import ColumnInfo, Finding, TableInfo, VolumeRecord
+    from olly.results import write_findings_json
+    from olly.state import get_olly_dir
+    from helpers import patch_dashboard
+
+    state_db_path = get_olly_dir(tmp_path) / "state.db"
+    state_db_path.parent.mkdir(parents=True)
+    db = StateDB(db_path=state_db_path)
+    db.init_db()
+
+    snap_id = db.create_snapshot()
+    db.store_schema_data(
+        snap_id,
+        [
+            TableInfo(
+                "main",
+                "orders",
+                "TABLE",
+                [
+                    ColumnInfo("id", "INTEGER", False),
+                    ColumnInfo("amount", "DOUBLE", False),
+                ],
+            ),
+        ],
+    )
+    db.store_volume_data(snap_id, [VolumeRecord("main", "orders", 100)])
+
+    test_findings = [
+        Finding("schema", "error", "main", "orders", "Column added: amount"),
+        Finding("volume", "warning", "main", "orders", "Z-score 3.5"),
+    ]
+    db.store_findings(test_findings)
+    db.close()
+
+    findings_path = get_olly_dir(tmp_path) / "findings.json"
+    write_findings_json(test_findings, findings_path)
+
+    return patch_dashboard(monkeypatch, state_db_path, tmp_path)

@@ -6,6 +6,7 @@ export interface DashboardStats {
 }
 
 export interface Finding {
+  id: number | null;
   check_type: string;
   severity: string;
   schema_name: string;
@@ -13,6 +14,23 @@ export interface Finding {
   description: string;
   details: Record<string, unknown>;
   connection_name: string;
+  disposition: string;
+  created_at: string;
+}
+
+export interface DispositionEvent {
+  id: number;
+  finding_id: number;
+  disposition: string;
+  comment: string;
+  created_at: string;
+  created_by: string;
+}
+
+export interface DispositionHistoryResponse {
+  finding_id: number;
+  current_disposition: string;
+  history: DispositionEvent[];
 }
 
 export interface DbtFinding {
@@ -44,6 +62,10 @@ export interface FindingsStats {
   warning_count: number;
   by_check_type: Record<string, [number, number]>;
   by_connection: Record<string, [number, number]>;
+  not_started_count: number;
+  in_progress_count: number;
+  no_action_count: number;
+  completed_count: number;
 }
 
 export interface ColumnInfo {
@@ -123,6 +145,13 @@ export interface PrevStats {
 }
 
 // API response types
+export interface DispositionCounts {
+  not_started: number;
+  in_progress: number;
+  no_action: number;
+  completed: number;
+}
+
 export interface OverviewResponse {
   stats: DashboardStats;
   dbt_stats: DbtStats;
@@ -133,6 +162,7 @@ export interface OverviewResponse {
   findings_trend: FindingsTrendPoint[];
   top_tables: TableRow[];
   prev_stats: PrevStats | null;
+  disposition_counts: DispositionCounts;
 }
 
 export interface FindingsResponse {
@@ -142,6 +172,7 @@ export interface FindingsResponse {
     check_types: string[];
     severities: string[];
     schemas: string[];
+    dispositions: string[];
   };
   page: number;
   total_pages: number;
@@ -163,6 +194,13 @@ export interface TableDetailResponse {
   volume_timeseries: { snapshot: string; row_count: number }[];
   history: TableHistory;
   schema_diff: SchemaDiff | null;
+  contract: ContractStatus | null;
+  integrity_syncs: SyncStatus[];
+  cost: {
+    query_count: number;
+    estimated_cost_usd: number;
+    top_users: { user: string; cost_usd: number; queries: number }[];
+  } | null;
 }
 
 export interface UsageResponse {
@@ -183,4 +221,51 @@ export interface DbtResponse {
 export interface ConnectionsResponse {
   connections: string[];
   current: string;
+}
+
+export interface ContractColumnStatus {
+  column_name: string;
+  expected_type: string;
+  nullable: boolean;
+}
+
+export interface ContractStatus {
+  schema_name: string;
+  table_name: string;
+  strict: boolean;
+  connection_name: string | null;
+  columns: ContractColumnStatus[];
+  status: string;
+  findings: Finding[];
+}
+
+export interface ContractsResponse {
+  contracts: ContractStatus[];
+  pass_count: number;
+  fail_count: number;
+  total_count: number;
+  configured: boolean;
+  last_check_time: string | null;
+}
+
+export interface SyncStatus {
+  name: string;
+  source: string;
+  target: string;
+  source_table: string;
+  target_table: string;
+  method: string;
+  key: string | null;
+  severity: string;
+  status: string;
+  findings: Finding[];
+}
+
+export interface IntegrityResponse {
+  syncs: SyncStatus[];
+  pass_count: number;
+  fail_count: number;
+  total_count: number;
+  configured: boolean;
+  last_check_time: string | null;
 }

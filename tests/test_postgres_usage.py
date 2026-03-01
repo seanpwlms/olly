@@ -3,47 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from olly.adapters.postgres import PostgresAdapter
-
-
-class _StubResult:
-    def __init__(self, rows):
-        self._rows = list(rows)
-
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-    def fetchall(self):
-        return self._rows
-
-
-class _StubConn:
-    """Minimal stand-in for an Ibis Postgres connection."""
-
-    def __init__(self, raw_sql_results: list[_StubResult] | None = None):
-        self.queries: list[str] = []
-        self._results = list(raw_sql_results or [])
-
-    def raw_sql(self, sql: str) -> _StubResult:
-        self.queries.append(sql)
-        if self._results:
-            return self._results.pop(0)
-        return _StubResult([])
-
-    def list_tables(self, schema: str | None = None) -> list[str]:
-        return []
-
-    def table(self, name: str, schema: str | None = None):
-        raise NotImplementedError
-
-
-def _make_adapter(raw_sql_results: list[_StubResult] | None = None) -> PostgresAdapter:
-    adapter = PostgresAdapter.__new__(PostgresAdapter)
-    adapter._conn = _StubConn(raw_sql_results)
-    return adapter
+from olly.models import ColumnInfo, TableInfo
+from helpers import PostgresStubResult, make_postgres_adapter
 
 
 def test_fetch_table_usage_empty_schemas():
-    adapter = _make_adapter()
+    adapter = make_postgres_adapter()
     records = adapter.fetch_table_usage([], lookback_days=90)
     assert records == []
 
@@ -53,10 +18,7 @@ def test_fetch_table_usage_returns_records():
     recent = now - timedelta(days=5)
 
     pg_stat_rows = [("public", "orders", recent)]
-    adapter = _make_adapter([_StubResult(pg_stat_rows)])
-
-    # Monkey-patch fetch_schema_info to avoid real DB calls
-    from olly.models import ColumnInfo, TableInfo
+    adapter = make_postgres_adapter(raw_sql_results=[PostgresStubResult(pg_stat_rows)])
 
     def fake_schema_info(schemas):
         return [
@@ -66,8 +28,7 @@ def test_fetch_table_usage_returns_records():
             ),
         ]
 
-    adapter.fetch_schema_info = fake_schema_info  # type: ignore[assignment]
-
+    adapter.fetch_schema_info = fake_schema_info  
     records = adapter.fetch_table_usage(["public"], lookback_days=90)
     assert len(records) == 2
 
@@ -82,15 +43,12 @@ def test_fetch_table_usage_old_access_becomes_none():
     old = now - timedelta(days=100)
 
     pg_stat_rows = [("public", "stale", old)]
-    adapter = _make_adapter([_StubResult(pg_stat_rows)])
-
-    from olly.models import ColumnInfo, TableInfo
+    adapter = make_postgres_adapter(raw_sql_results=[PostgresStubResult(pg_stat_rows)])
 
     def fake_schema_info(schemas):
         return [TableInfo("public", "stale", "TABLE", [ColumnInfo("id", "int", False)])]
 
-    adapter.fetch_schema_info = fake_schema_info  # type: ignore[assignment]
-
+    adapter.fetch_schema_info = fake_schema_info  
     records = adapter.fetch_table_usage(["public"], lookback_days=90)
     assert len(records) == 1
     assert records[0].last_queried_at is None
@@ -102,17 +60,14 @@ def test_fetch_table_usage_naive_timestamp():
     recent_naive = (now - timedelta(days=5)).replace(tzinfo=None)
 
     pg_stat_rows = [("public", "orders", recent_naive)]
-    adapter = _make_adapter([_StubResult(pg_stat_rows)])
-
-    from olly.models import ColumnInfo, TableInfo
+    adapter = make_postgres_adapter(raw_sql_results=[PostgresStubResult(pg_stat_rows)])
 
     def fake_schema_info(schemas):
         return [
             TableInfo("public", "orders", "TABLE", [ColumnInfo("id", "int", False)])
         ]
 
-    adapter.fetch_schema_info = fake_schema_info  # type: ignore[assignment]
-
+    adapter.fetch_schema_info = fake_schema_info  
     records = adapter.fetch_table_usage(["public"], lookback_days=90)
     assert len(records) == 1
     assert records[0].last_queried_at is not None
@@ -135,10 +90,9 @@ def test_fetch_table_usage_pg_lt_16_fallback(caplog):
 
 def test_fetch_table_usage_sql_structure():
     """Verify the generated SQL queries pg_stat_user_tables."""
-    adapter = _make_adapter([_StubResult([])])
+    adapter = make_postgres_adapter(raw_sql_results=[PostgresStubResult([])])
 
-    adapter.fetch_schema_info = lambda schemas: []  # type: ignore[assignment]
-
+    adapter.fetch_schema_info = lambda schemas: []  
     adapter.fetch_table_usage(["public", "analytics"], lookback_days=90)
     sql = adapter._conn.queries[0]
     assert "pg_stat_user_tables" in sql
@@ -150,9 +104,7 @@ def test_fetch_table_usage_sql_structure():
 def test_fetch_table_usage_null_last_queried():
     """Tables with NULL last_seq_scan and last_idx_scan get None."""
     pg_stat_rows = [("public", "never_scanned", None)]
-    adapter = _make_adapter([_StubResult(pg_stat_rows)])
-
-    from olly.models import ColumnInfo, TableInfo
+    adapter = make_postgres_adapter(raw_sql_results=[PostgresStubResult(pg_stat_rows)])
 
     def fake_schema_info(schemas):
         return [
@@ -161,8 +113,7 @@ def test_fetch_table_usage_null_last_queried():
             )
         ]
 
-    adapter.fetch_schema_info = fake_schema_info  # type: ignore[assignment]
-
+    adapter.fetch_schema_info = fake_schema_info  
     records = adapter.fetch_table_usage(["public"], lookback_days=90)
     assert len(records) == 1
     assert records[0].last_queried_at is None

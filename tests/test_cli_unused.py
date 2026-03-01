@@ -14,24 +14,7 @@ from olly.config import (
     write_config,
 )
 from olly.models import UsageRecord
-
-
-class FakeUsageAdapter:
-    """Adapter that returns pre-configured usage records."""
-
-    def __init__(self, records: list[UsageRecord]) -> None:
-        self._records = records
-
-    def list_schemas(self) -> list[str]:
-        return ["public"]
-
-    def fetch_table_usage(
-        self,
-        schemas: list[str],
-        lookback_days: int,
-        region: str = "us",
-    ) -> list[UsageRecord]:
-        return self._records
+from helpers import FakeUsageAdapter
 
 
 def _write_config(tmp_path):

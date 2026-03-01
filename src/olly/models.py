@@ -14,6 +14,15 @@ class WindowOp(str, Enum):
     EQ_DATE = "eq_date"
 
 
+class Disposition(str, Enum):
+    """Workflow status for a finding disposition."""
+
+    NOT_STARTED = "not_started"
+    NO_ACTION = "no_action"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
 class IntegrityMethod(str, Enum):
     """Comparison method used for cross-source integrity checks."""
 
@@ -83,6 +92,9 @@ class Finding:
     description: str
     details: dict = field(default_factory=dict)
     connection_name: str = ""
+    id: int | None = None
+    disposition: str = "not_started"
+    created_at: str = ""
 
 
 @dataclass

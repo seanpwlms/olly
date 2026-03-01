@@ -1,33 +1,8 @@
-from olly.adapters.postgres import PostgresAdapter
-
-
-class _StubResult:
-    def __init__(self, row):
-        self._row = row
-
-    def fetchone(self):
-        return self._row
-
-
-class _StubConn:
-    def __init__(self, rows):
-        self._rows = list(rows)
-        self.queries = []
-
-    def raw_sql(self, sql):
-        self.queries.append(sql)
-        row = self._rows.pop(0) if self._rows else (None,)
-        return _StubResult(row)
-
-
-def _make_adapter(rows):
-    adapter = PostgresAdapter.__new__(PostgresAdapter)
-    adapter._conn = _StubConn(rows)
-    return adapter
+from helpers import make_postgres_adapter
 
 
 def test_postgres_fetch_count_sql():
-    adapter = _make_adapter(rows=[(4,)])
+    adapter = make_postgres_adapter(rows=[(4,)])
     count = adapter.fetch_count("public", "orders", "amount >= 10")
     assert count == 4
     assert adapter._conn.queries == [
@@ -36,7 +11,7 @@ def test_postgres_fetch_count_sql():
 
 
 def test_postgres_fetch_count_distinct_sql():
-    adapter = _make_adapter(rows=[(2,)])
+    adapter = make_postgres_adapter(rows=[(2,)])
     count = adapter.fetch_count_distinct(
         "public",
         "orders",
@@ -51,7 +26,7 @@ def test_postgres_fetch_count_distinct_sql():
 
 
 def test_postgres_fetch_hash_sql():
-    adapter = _make_adapter(rows=[("abc123",)])
+    adapter = make_postgres_adapter(rows=[("abc123",)])
     value = adapter.fetch_hash(
         "public",
         "orders",

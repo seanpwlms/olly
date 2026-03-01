@@ -1,29 +1,66 @@
 # Dashboard Development Guide
 
-Fast API + Jinja2 web UI for Olly data quality monitoring. Read-only dashboard displaying findings, schema history, and volume trends.
+FastAPI JSON API + React SPA for Olly data quality monitoring. Dashboard displays findings, schema history, volume trends, dbt results, usage/cost data, and disposition tracking.
 
 ## Architecture
 
 ```
-routes.py      → FastAPI route handlers (/, /findings, /history, /tables, etc.)
-data.py        → Data aggregation functions (stats, filtering, grouping)
-charts.py      → Vega-Lite chart specifications
-templates/     → Jinja2 HTML templates
-  base.html    → Base layout with navigation
-  *.html       → Page templates
-  partials/    → HTMX partial templates for dynamic updates
-static/        → CSS styles
+app.py          → FastAPI app setup, SPA catch-all route, static file mounting
+api_routes.py   → JSON API route handlers (all under /api prefix)
+schemas.py      → Pydantic response models for all API endpoints
+data.py         → Data aggregation functions (stats, filtering, grouping, timeseries)
+data_checks.py  → Contracts and integrity page data builders
+frontend/       → React + TypeScript SPA (Vite + TanStack Router)
+  src/
+    routes/     → Page components (file-based routing via TanStack Router)
+    components/ → Reusable UI components
+    hooks/      → React Query hooks for API data fetching
+    api.ts      → API client functions
+    types.ts    → TypeScript type definitions
+static/dist/    → Built frontend assets (served by FastAPI)
 ```
+
+## API Routes (`api_routes.py`)
+
+All routes are prefixed with `/api`. JSON responses only.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/connections` | List all configured connections |
+| GET | `/api/overview` | Dashboard home stats, trends, top tables |
+| GET | `/api/findings` | Paginated findings with filters (check_type, severity, schema, disposition, q) |
+| GET | `/api/tables` | Paginated table list with search/sort |
+| GET | `/api/table/{schema}/{table}` | Table detail: schema, findings, volume timeseries, history, diff |
+| GET | `/api/history` | Snapshot history (configurable days param) |
+| GET | `/api/usage` | Usage stats, cost timeseries, least-used tables |
+| GET | `/api/dbt` | dbt findings and stats |
+| PUT | `/api/findings/{finding_id}/disposition` | Set disposition (body: `{disposition, comment}`) |
+| GET | `/api/findings/{finding_id}/dispositions` | Disposition history for a finding |
+| POST | `/api/refresh` | Trigger a new check run |
+
+## Frontend Routes
+
+File-based routing via TanStack Router. Each file in `frontend/src/routes/` maps to a URL:
+
+| File | URL | Description |
+|------|-----|-------------|
+| `index.tsx` | `/` | Overview dashboard |
+| `findings.tsx` | `/findings` | Findings list with filters |
+| `tables.tsx` | `/tables` | Tables list |
+| `table.$schema.$table.tsx` | `/table/:schema/:table` | Table detail page |
+| `usage.tsx` | `/usage` | Usage & cost analysis |
+| `dbt.tsx` | `/dbt` | dbt results |
+| `__root.tsx` | — | Root layout with navigation |
 
 ## Key Principles
 
-**Read-Only**: Dashboard reads from findings JSON and state DB only. Never writes to warehouse or modifies data.
+**Read-Only**: Dashboard reads from state DB only. Never writes to warehouse or modifies data. Exception: `/api/refresh` triggers a check run.
 
-**State-First**: All warehouse data comes from state DB (`~/.olly/<project-hash>/state.db`), not live warehouse queries. Exception: `/config` page may connect to warehouse for live schema inspection.
+**State-First**: All warehouse data comes from state DB (`~/.olly/<project-hash>/state.db`), not live warehouse queries.
 
-**Multi-Connection**: All routes accept `connection: str = Query("")` parameter. Use `_get_current_connection()` helper to resolve connection name. Pass to state DB queries.
+**Multi-Connection**: All API routes accept `connection` query parameter. Use `_get_current_connection()` helper to resolve connection name.
 
-**HTMX**: Filters and pagination use HTMX for partial page updates. Routes return full page or partials based on `HX-Request` header.
+**SPA Architecture**: FastAPI serves the built React app. The catch-all route in `app.py` returns `index.html` for all non-API paths. Frontend uses React Query for data fetching and caching.
 
 ## Development Workflow
 
@@ -34,71 +71,67 @@ uv run python demo_dashboard.py  # Seeds demo data + launches dashboard
 # Dashboard runs at http://localhost:8000
 ```
 
+**Frontend Development**:
+```bash
+cd src/olly/dashboard/frontend/
+npm install
+npm run dev     # Vite dev server with HMR
+npm run build   # Build to static/dist/
+```
+
 **Run Tests**:
 ```bash
 uv run pytest tests/test_dashboard.py -v
 uv run pytest tests/test_dashboard.py --cov=olly.dashboard --cov-report=term-missing
 ```
 
-**Test Fixtures**: Use `dashboard_client` fixture which mocks `_state_db()`, `_get_current_connection()`, and `get_all_connections()` to avoid needing real config/warehouse.
+## Adding a New API Route
 
-## Adding a New Page
-
-1. **Route** (`routes.py`):
+1. **Route** (`api_routes.py`):
    ```python
-   @router.get("/newpage", response_class=HTMLResponse)
-   def newpage(request: Request, connection: str = Query("")):
+   @router.get("/newroute", response_model=NewRouteResponse)
+   def api_newroute(connection: str = Query("")):
        conn_name = _get_current_connection(connection)
-       # Load data from state DB or findings
-       return templates.TemplateResponse(request, "newpage.html", {
-           "connections": get_all_connections(),
-           "current_connection": conn_name,
-           # ... other context
-       })
+       with _state_db(conn_name) as (state_db, conn_name):
+           # Load data from state DB
+           data = ...
+       return NewRouteResponse(data=DataModel.model_validate(data))
    ```
+   Define Pydantic response models in `schemas.py`. Use `model_validate()` to convert dataclass instances.
 
-2. **Template** (`templates/newpage.html`):
-   ```html
-   {% extends "base.html" %}
-   {% block title %}Page Title{% endblock %}
-   {% block content %}
-   <!-- Page content -->
-   {% endblock %}
-   ```
+2. **API client** (`frontend/src/api.ts`): Add fetch function.
 
-3. **Navigation** (`templates/base.html`):
-   ```html
-   <a href="/newpage" class="nav-link">New Page</a>
-   ```
+3. **React Query hook** (`frontend/src/hooks/queries.ts`): Add query hook.
 
-4. **Tests** (`tests/test_dashboard.py`):
+4. **Frontend route** (`frontend/src/routes/newroute.tsx`): Add page component.
+
+5. **Tests** (`tests/test_dashboard.py`):
    ```python
-   def test_newpage(dashboard_client):
-       resp = dashboard_client.get("/newpage")
+   def test_newroute(dashboard_client):
+       resp = dashboard_client.get("/api/newroute")
        assert resp.status_code == 200
    ```
 
 ## Data Patterns
 
-**Findings**: Load from `load_findings()` → returns `(findings, generated_at)` tuple.
+**Findings from DB**: Use `load_findings_from_db(state_db)` to load from latest check run stored in state DB.
+
+**Dispositions**: Call `hydrate_dispositions(findings, state_db)` to fill in disposition fields on findings.
 
 **State DB**: Use `_state_db(conn_name)` context manager → yields `(BaseStateStore, connection_name)`.
 
-**Aggregation**: Create functions in `data.py` that take findings/state data and return stats/grouped data.
-
-**Charts**: Create Vega-Lite specs in `charts.py`, pass as JSON to templates via `json.dumps(spec)`.
+**Aggregation**: Functions in `data.py` take findings/state data and return dataclass results. Pydantic response models in `schemas.py` handle serialization at the API boundary via `Model.model_validate()`.
 
 ## Common Pitfalls
 
-- **Don't call `load_config()` in routes** - breaks tests. Use mocked helpers instead.
-- **Don't connect to warehouse in routes** - dashboard should work offline. Read from state DB.
-- **Always pass `connections` and `current_connection` to templates** - needed for connection selector.
-- **Use `connection_name=""` for "all connections"** - state DB methods default to all when empty string.
-- **Remember connection_name in findings** - filter by `f.connection_name or "default"` (empty string defaults to "default").
+- **Don't connect to warehouse in routes** — dashboard should work offline. Read from state DB.
+- **Use `connection_name=""` for "all connections"** — state DB methods default to all when empty string.
+- **Remember connection_name in findings** — filter by `f.connection_name or "default"` (empty string defaults to "default").
+- **Use Pydantic response models** — define models in `schemas.py` with `ConfigDict(from_attributes=True)` and use `Model.model_validate()` to convert dataclass instances.
 
 ## Testing Requirements
 
-- All new routes need tests
+- All new API routes need tests
 - All new data functions need unit tests
-- Mock `_state_db()`, `_get_current_connection()`, `get_all_connections()` in fixtures
+- Mock `_state_db()`, `_get_current_connection()`, `_get_all_connections()` in fixtures
 - Dashboard module coverage must be ≥80%

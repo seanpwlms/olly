@@ -133,8 +133,9 @@ def test_run_check_no_snapshots(tmp_path, monkeypatch, duckdb_path):
     monkeypatch.chdir(tmp_path)
     _write_config(tmp_path / "olly.toml", duckdb_path)
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc_info:
         run_check(write_results=False)
+    assert exc_info.value.code == 1
 
 
 def test_run_check_table_output_no_findings(tmp_path, monkeypatch, duckdb_path, capsys):
@@ -168,8 +169,9 @@ def test_run_check_table_output_with_findings(
         description="Column dropped",
     )
     with patch("olly.cli.check.run_checks", return_value=([fake_finding], [], [])):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc_info:
             run_check(output_json=False, write_results=False)
+        assert exc_info.value.code == 1
     output = capsys.readouterr().out
     assert "1 error(s)" in output
 
@@ -202,8 +204,9 @@ def test_run_check_exit_code_1_with_findings(tmp_path, monkeypatch, duckdb_path)
         description="Row count anomaly",
     )
     with patch("olly.cli.check.run_checks", return_value=([fake_finding], [], [])):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc_info:
             run_check(output_json=True, write_results=False)
+        assert exc_info.value.code == 1
 
 
 # --- Print function tests ---
@@ -336,8 +339,9 @@ def test_run_check_dbt_findings_summary(tmp_path, monkeypatch, duckdb_path, caps
         description="Compile error",
     )
     with patch("olly.cli.check.run_checks", return_value=([], [dbt_finding], [])):
-        with pytest.raises(SystemExit):
+        with pytest.raises(SystemExit) as exc_info:
             run_check(output_json=False, write_results=False)
+        assert exc_info.value.code == 1
     output = capsys.readouterr().out
     assert "1 dbt error(s)" in output
 
@@ -375,8 +379,9 @@ def test_run_check_passes_findings_to_slack(tmp_path, monkeypatch, duckdb_path):
     )
     with patch("olly.cli.check.run_checks", return_value=([fake_finding], [], [])):
         with patch("olly.cli.check.send_slack_alert") as mock_slack:
-            with pytest.raises(SystemExit):
+            with pytest.raises(SystemExit) as exc_info:
                 run_check(output_json=True, write_results=False)
+            assert exc_info.value.code == 1
             args = mock_slack.call_args[0]
             # args: (config.slack, findings, dbt_findings)
             assert args[1] == [fake_finding]

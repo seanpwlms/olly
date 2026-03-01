@@ -77,12 +77,22 @@ CREATE TABLE IF NOT EXISTS dbt_findings (
     details TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS finding_dispositions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    finding_id INTEGER NOT NULL REFERENCES findings(id),
+    disposition TEXT NOT NULL,
+    comment TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL DEFAULT ''
+);
+
 CREATE INDEX IF NOT EXISTS idx_schema_snapshot_sid ON schema_snapshot(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_volume_snapshot_sid ON volume_snapshot(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_cost_records_run_id ON cost_records(cost_run_id);
 CREATE INDEX IF NOT EXISTS idx_findings_created_at ON findings(created_at);
 CREATE INDEX IF NOT EXISTS idx_findings_connection ON findings(connection_name);
 CREATE INDEX IF NOT EXISTS idx_dbt_findings_created_at ON dbt_findings(created_at);
+CREATE INDEX IF NOT EXISTS idx_finding_dispositions_fid ON finding_dispositions(finding_id);
 """
 
 # Regex to convert :name placeholders to ? for sqlite3
@@ -161,6 +171,27 @@ class StateDB(BaseStateStore):
                 "ALTER TABLE snapshots ADD COLUMN connection_name TEXT NOT NULL DEFAULT ''"
             )
             self.conn.commit()
+
+        # Ensure finding_dispositions table exists for older databases
+        tables = {
+            row[0]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "finding_dispositions" not in tables:
+            self.conn.executescript(
+                "CREATE TABLE IF NOT EXISTS finding_dispositions ("
+                "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "    finding_id INTEGER NOT NULL REFERENCES findings(id),"
+                "    disposition TEXT NOT NULL,"
+                "    comment TEXT NOT NULL DEFAULT '',"
+                "    created_at TEXT NOT NULL,"
+                "    created_by TEXT NOT NULL DEFAULT ''"
+                ");"
+                "CREATE INDEX IF NOT EXISTS idx_finding_dispositions_fid "
+                "ON finding_dispositions(finding_id);"
+            )
 
     def _table(self, name: str) -> str:
         return name

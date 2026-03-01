@@ -1,3 +1,5 @@
+import pytest
+
 from olly.config import ConnectionConfig, NamedConnection, OllyConfig, Selection
 from olly.models import ColumnInfo, CostRecord, DbtFinding, Finding, TableInfo, VolumeRecord
 from olly.state import StateDB, open_state
@@ -348,3 +350,160 @@ def test_findings_indexes_created(tmp_path):
         assert "idx_findings_created_at" in indexes
         assert "idx_findings_connection" in indexes
         assert "idx_dbt_findings_created_at" in indexes
+        assert "idx_finding_dispositions_fid" in indexes
+
+
+# --- Disposition tests ---
+
+
+def _store_sample_finding(state_db):
+    """Store a single finding and return its id."""
+    findings = [
+        Finding(
+            check_type="schema",
+            severity="error",
+            schema_name="main",
+            table_name="orders",
+            description="Column removed",
+        )
+    ]
+    state_db.store_findings(findings)
+    loaded = state_db.get_latest_findings()
+    assert len(loaded) == 1
+    assert loaded[0].id is not None
+    return loaded[0].id
+
+
+def test_set_and_get_disposition(state_db):
+    fid = _store_sample_finding(state_db)
+
+    # No disposition set yet means not in map
+    disps = state_db.get_current_dispositions([fid])
+    assert disps == {}
+
+    # Set disposition
+    disp_id = state_db.set_disposition(fid, "in_progress", comment="Working on it")
+    assert disp_id is not None
+
+    disps = state_db.get_current_dispositions([fid])
+    assert disps[fid] == "in_progress"
+
+
+def test_disposition_history(state_db):
+    fid = _store_sample_finding(state_db)
+
+    state_db.set_disposition(fid, "in_progress", comment="Started")
+    state_db.set_disposition(fid, "completed", comment="Done")
+
+    history = state_db.get_disposition_history(fid)
+    assert len(history) == 2
+    assert history[0]["disposition"] == "completed"
+    assert history[0]["comment"] == "Done"
+    assert history[1]["disposition"] == "in_progress"
+    assert history[1]["comment"] == "Started"
+
+
+def test_get_current_dispositions_latest_wins(state_db):
+    fid = _store_sample_finding(state_db)
+
+    state_db.set_disposition(fid, "in_progress")
+    state_db.set_disposition(fid, "no_action")
+    state_db.set_disposition(fid, "completed")
+
+    disps = state_db.get_current_dispositions([fid])
+    assert disps[fid] == "completed"
+
+
+def test_get_current_dispositions_multiple_findings(state_db):
+    findings = [
+        Finding(check_type="schema", severity="error", schema_name="main",
+                table_name="t1", description="d1"),
+        Finding(check_type="volume", severity="warning", schema_name="main",
+                table_name="t2", description="d2"),
+    ]
+    state_db.store_findings(findings)
+    loaded = state_db.get_latest_findings()
+    assert len(loaded) == 2
+    fid1, fid2 = loaded[0].id, loaded[1].id
+
+    state_db.set_disposition(fid1, "in_progress")
+    state_db.set_disposition(fid2, "completed")
+
+    disps = state_db.get_current_dispositions([fid1, fid2])
+    assert disps[fid1] == "in_progress"
+    assert disps[fid2] == "completed"
+
+
+def test_set_disposition_invalid_value(state_db):
+    fid = _store_sample_finding(state_db)
+
+    with pytest.raises(ValueError, match="Invalid disposition"):
+        state_db.set_disposition(fid, "bogus")
+
+
+def test_get_current_dispositions_empty_list(state_db):
+    assert state_db.get_current_dispositions([]) == {}
+
+
+def test_get_disposition_history_no_entries(state_db):
+    fid = _store_sample_finding(state_db)
+    assert state_db.get_disposition_history(fid) == []
+
+
+def test_findings_have_id_from_db(state_db):
+    """Findings loaded from DB should have their id populated."""
+    state_db.store_findings([
+        Finding(check_type="schema", severity="error", schema_name="main",
+                table_name="orders", description="test"),
+    ])
+    findings = state_db.get_latest_findings()
+    assert len(findings) == 1
+    assert findings[0].id is not None
+    assert isinstance(findings[0].id, int)
+    assert findings[0].disposition == "not_started"
+
+
+def test_findings_history_have_id(state_db):
+    """Findings from get_findings_history should have id populated."""
+    state_db.store_findings([
+        Finding(check_type="volume", severity="warning", schema_name="main",
+                table_name="orders", description="test"),
+    ])
+    findings = state_db.get_findings_history(limit=10)
+    assert len(findings) == 1
+    assert findings[0].id is not None
+
+
+def test_migration_creates_dispositions_table(tmp_path):
+    """Existing databases without the dispositions table get it after migration."""
+    import sqlite3
+
+    db_path = tmp_path / "state.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.executescript("""
+        CREATE TABLE snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            connection_name TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE findings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            created_at TEXT NOT NULL,
+            connection_name TEXT NOT NULL,
+            check_type TEXT NOT NULL,
+            severity TEXT NOT NULL,
+            schema_name TEXT NOT NULL,
+            table_name TEXT NOT NULL,
+            description TEXT NOT NULL,
+            details TEXT NOT NULL
+        );
+    """)
+    conn.close()
+
+    with StateDB(db_path=db_path) as db:
+        tables = {
+            row[0] for row in db.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        assert "finding_dispositions" in tables

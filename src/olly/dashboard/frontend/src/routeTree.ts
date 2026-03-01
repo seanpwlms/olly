@@ -8,6 +8,8 @@ import { IndexPage } from "./routes/index";
 import { FindingsPage } from "./routes/findings";
 import { TablesPage } from "./routes/tables";
 import { TableDetailPage } from "./routes/table.$schema.$table";
+import { ContractsPage } from "./routes/contracts";
+import { IntegrityPage } from "./routes/integrity";
 import { UsagePage } from "./routes/usage";
 import { DbtPage } from "./routes/dbt";
 
@@ -20,6 +22,7 @@ export type FindingsSearch = {
   severity?: string;
   check_type?: string;
   schema?: string;
+  disposition?: string;
   q?: string;
   page?: number;
   tab?: string;
@@ -59,6 +62,7 @@ export const findingsRoute = createRoute({
     severity: (search.severity as string) || undefined,
     check_type: (search.check_type as string) || undefined,
     schema: (search.schema as string) || undefined,
+    disposition: (search.disposition as string) || undefined,
     q: (search.q as string) || undefined,
     page: Number(search.page) || undefined,
     tab: (search.tab as string) || undefined,
@@ -85,6 +89,18 @@ const tableDetailRoute = createRoute({
   component: TableDetailPage,
 });
 
+const contractsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/contracts",
+  component: ContractsPage,
+});
+
+const integrityRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/integrity",
+  component: IntegrityPage,
+});
+
 const usageRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/usage",
@@ -107,6 +123,8 @@ const routeTree = rootRoute.addChildren([
   findingsRoute,
   tablesRoute,
   tableDetailRoute,
+  contractsRoute,
+  integrityRoute,
   usageRoute,
   dbtRoute,
 ]);
