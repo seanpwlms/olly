@@ -125,10 +125,14 @@ def run_checks(
                 key: settings.volume_zscore_threshold
                 for key, settings in overrides_map.items()
             }
+            methods = {
+                key: settings.volume_method
+                for key, settings in overrides_map.items()
+            }
 
             volume_findings = check_volume(
                 latest_volumes, state_db, config.settings, thresholds,
-                connection_name=name,
+                methods=methods, connection_name=name,
             )
             for f in volume_findings:
                 f.connection_name = name
@@ -149,7 +153,7 @@ def run_checks(
     if config.integrity.module:
         config_path = config.config_path or Path("olly.toml")
         syncs = load_syncs(config.integrity.module, config_path)
-        findings.extend(run_syncs(syncs, sources=config.sources))
+        findings.extend(run_syncs(syncs, connections=config.connections))
 
     # dbt checks (global)
     logger.debug("Running dbt checks")

@@ -4,6 +4,7 @@ import duckdb
 import pytest
 
 from olly.checks.integrity import _parse_duration, run_syncs
+from olly.config import ConnectionConfig, NamedConnection
 from olly.models import IntegrityMethod, Sync, WindowOp, WindowSpec
 
 
@@ -23,6 +24,22 @@ def test_parse_duration(value, expected):
 def test_parse_duration_invalid():
     with pytest.raises(ValueError, match="Invalid duration"):
         _parse_duration("abc")
+
+
+def _make_connections(source_path, target_path=None):
+    """Build a connections dict from DuckDB paths."""
+    if target_path is None:
+        target_path = source_path
+    return {
+        "source": NamedConnection(
+            name="source",
+            connection=ConnectionConfig(type="duckdb", path=str(source_path)),
+        ),
+        "target": NamedConnection(
+            name="target",
+            connection=ConnectionConfig(type="duckdb", path=str(target_path)),
+        ),
+    }
 
 
 def _create_orders_db(path, rows):
@@ -52,10 +69,7 @@ def test_integrity_count_match(tmp_path):
     ]
     _create_orders_db(source_path, rows)
 
-    sources = {
-        "source": f"duckdb:///{source_path}",
-        "target": f"duckdb:///{source_path}",
-    }
+    connections = _make_connections(source_path)
 
     pipelines = [
         Sync(
@@ -74,7 +88,7 @@ def test_integrity_count_match(tmp_path):
         )
     ]
 
-    findings = run_syncs(pipelines, sources=sources)
+    findings = run_syncs(pipelines, connections=connections)
     assert findings == []
 
 
@@ -93,10 +107,7 @@ def test_integrity_count_mismatch(tmp_path):
     _create_orders_db(source_path, source_rows)
     _create_orders_db(target_path, target_rows)
 
-    sources = {
-        "source": f"duckdb:///{source_path}",
-        "target": f"duckdb:///{target_path}",
-    }
+    connections = _make_connections(source_path, target_path)
 
     pipelines = [
         Sync(
@@ -115,7 +126,7 @@ def test_integrity_count_mismatch(tmp_path):
         )
     ]
 
-    findings = run_syncs(pipelines, sources=sources)
+    findings = run_syncs(pipelines, connections=connections)
     assert len(findings) == 1
     assert findings[0].check_type == "integrity"
 
@@ -135,10 +146,7 @@ def test_integrity_count_distinct(tmp_path):
     _create_orders_db(source_path, source_rows)
     _create_orders_db(target_path, target_rows)
 
-    sources = {
-        "source": f"duckdb:///{source_path}",
-        "target": f"duckdb:///{target_path}",
-    }
+    connections = _make_connections(source_path, target_path)
 
     pipelines = [
         Sync(
@@ -158,7 +166,7 @@ def test_integrity_count_distinct(tmp_path):
         )
     ]
 
-    findings = run_syncs(pipelines, sources=sources)
+    findings = run_syncs(pipelines, connections=connections)
     assert len(findings) == 1
     assert findings[0].details["method"] == "count_distinct"
 
@@ -177,10 +185,7 @@ def test_integrity_hash_mismatch(tmp_path):
     _create_orders_db(source_path, source_rows)
     _create_orders_db(target_path, target_rows)
 
-    sources = {
-        "source": f"duckdb:///{source_path}",
-        "target": f"duckdb:///{target_path}",
-    }
+    connections = _make_connections(source_path, target_path)
 
     pipelines = [
         Sync(
@@ -201,7 +206,7 @@ def test_integrity_hash_mismatch(tmp_path):
         )
     ]
 
-    findings = run_syncs(pipelines, sources=sources)
+    findings = run_syncs(pipelines, connections=connections)
     assert len(findings) == 1
     assert findings[0].details["method"] == "hash"
 
@@ -221,10 +226,7 @@ def test_integrity_target_max_watermark_tolerance(tmp_path):
     _create_orders_db(source_path, source_rows)
     _create_orders_db(target_path, target_rows)
 
-    sources = {
-        "source": f"duckdb:///{source_path}",
-        "target": f"duckdb:///{target_path}",
-    }
+    connections = _make_connections(source_path, target_path)
 
     pipelines = [
         Sync(
@@ -244,14 +246,14 @@ def test_integrity_target_max_watermark_tolerance(tmp_path):
         )
     ]
 
-    findings = run_syncs(pipelines, sources=sources)
+    findings = run_syncs(pipelines, connections=connections)
     assert not findings
 
 
 # --- Validation error tests ---
 
 
-def test_sources_none_raises():
+def test_connections_empty_raises():
     pipeline = Sync(
         name="p",
         source="s",
@@ -262,11 +264,11 @@ def test_sources_none_raises():
         watermark="ts",
         window=WindowSpec(op=WindowOp.BETWEEN, start="2026-01-01", end="2026-01-02"),
     )
-    with pytest.raises(ValueError, match="sources"):
-        run_syncs([pipeline], sources=None)
+    with pytest.raises(ValueError, match="connections"):
+        run_syncs([pipeline], connections={})
 
 
-def test_unknown_source_raises():
+def test_unknown_connection_raises():
     pipeline = Sync(
         name="p",
         source="missing",
@@ -277,8 +279,12 @@ def test_unknown_source_raises():
         watermark="ts",
         window=WindowSpec(op=WindowOp.BETWEEN, start="2026-01-01", end="2026-01-02"),
     )
-    with pytest.raises(ValueError, match="unknown sources"):
-        run_syncs([pipeline], sources={"other": "duckdb:///x"})
+    other_nc = NamedConnection(
+        name="other",
+        connection=ConnectionConfig(type="duckdb", path="x.duckdb"),
+    )
+    with pytest.raises(ValueError, match="unknown connections"):
+        run_syncs([pipeline], connections={"other": other_nc})
 
 
 def test_missing_window_raises():
@@ -292,8 +298,12 @@ def test_missing_window_raises():
         watermark="ts",
         window=None,
     )
+    conns = {
+        "s": NamedConnection(name="s", connection=ConnectionConfig(type="duckdb", path="x.duckdb")),
+        "t": NamedConnection(name="t", connection=ConnectionConfig(type="duckdb", path="y.duckdb")),
+    }
     with pytest.raises(ValueError, match="missing a window"):
-        run_syncs([pipeline], sources={"s": "duckdb:///x", "t": "duckdb:///y"})
+        run_syncs([pipeline], connections=conns)
 
 
 def test_missing_watermark_raises():
@@ -307,8 +317,12 @@ def test_missing_watermark_raises():
         watermark=None,
         window=WindowSpec(op=WindowOp.BETWEEN, start="2026-01-01", end="2026-01-02"),
     )
+    conns = {
+        "s": NamedConnection(name="s", connection=ConnectionConfig(type="duckdb", path="x.duckdb")),
+        "t": NamedConnection(name="t", connection=ConnectionConfig(type="duckdb", path="y.duckdb")),
+    }
     with pytest.raises(ValueError, match="missing a watermark"):
-        run_syncs([pipeline], sources={"s": "duckdb:///x", "t": "duckdb:///y"})
+        run_syncs([pipeline], connections=conns)
 
 
 @pytest.mark.parametrize(
@@ -326,8 +340,12 @@ def test_key_required_for_method(method):
         watermark="ts",
         window=WindowSpec(op=WindowOp.BETWEEN, start="2026-01-01", end="2026-01-02"),
     )
+    conns = {
+        "s": NamedConnection(name="s", connection=ConnectionConfig(type="duckdb", path="x.duckdb")),
+        "t": NamedConnection(name="t", connection=ConnectionConfig(type="duckdb", path="y.duckdb")),
+    }
     with pytest.raises(ValueError, match="requires a key"):
-        run_syncs([pipeline], sources={"s": "duckdb:///x", "t": "duckdb:///y"})
+        run_syncs([pipeline], connections=conns)
 
 
 # --- PK method test ---
@@ -348,10 +366,7 @@ def test_integrity_pk_mismatch(tmp_path):
     _create_orders_db(source_path, source_rows)
     _create_orders_db(target_path, target_rows)
 
-    sources = {
-        "source": f"duckdb:///{source_path}",
-        "target": f"duckdb:///{target_path}",
-    }
+    connections = _make_connections(source_path, target_path)
 
     pipelines = [
         Sync(
@@ -371,7 +386,7 @@ def test_integrity_pk_mismatch(tmp_path):
         )
     ]
 
-    findings = run_syncs(pipelines, sources=sources)
+    findings = run_syncs(pipelines, connections=connections)
     assert len(findings) == 1
     assert findings[0].details["method"] == "pk"
 
@@ -388,10 +403,7 @@ def test_integrity_hash_defaults_to_key(tmp_path):
     ]
     _create_orders_db(source_path, rows)
 
-    sources = {
-        "source": f"duckdb:///{source_path}",
-        "target": f"duckdb:///{source_path}",
-    }
+    connections = _make_connections(source_path)
 
     pipelines = [
         Sync(
@@ -412,5 +424,5 @@ def test_integrity_hash_defaults_to_key(tmp_path):
         )
     ]
 
-    findings = run_syncs(pipelines, sources=sources)
+    findings = run_syncs(pipelines, connections=connections)
     assert not findings

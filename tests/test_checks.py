@@ -308,9 +308,11 @@ def test_freshness_timestamp_stale(olly_config_with_freshness, state_db):
             freshness_column="updated_at",
             freshness_threshold_hours=0.0001,
             volume_zscore_threshold=config.settings.volume_zscore_threshold,
+            volume_method=config.settings.volume_method,
             freshness_column_source="object",
             freshness_threshold_hours_source="object",
             volume_zscore_threshold_source="global",
+            volume_method_source="global",
         )
     }
 
@@ -338,9 +340,11 @@ def test_freshness_timestamp_fresh(olly_config_with_freshness, state_db):
             freshness_column="updated_at",
             freshness_threshold_hours=999999,
             volume_zscore_threshold=config.settings.volume_zscore_threshold,
+            volume_method=config.settings.volume_method,
             freshness_column_source="object",
             freshness_threshold_hours_source="object",
             volume_zscore_threshold_source="global",
+            volume_method_source="global",
         )
     }
 
@@ -399,9 +403,11 @@ def test_freshness_missing_column(tmp_path, state_db):
             freshness_column="occurred_at",  # Column doesn't exist!
             freshness_threshold_hours=24,
             volume_zscore_threshold=3.0,
+            volume_method="ewma",
             freshness_column_source="object",
             freshness_threshold_hours_source="object",
             volume_zscore_threshold_source="global",
+            volume_method_source="global",
         )
     }
 
@@ -432,9 +438,11 @@ def test_freshness_future_timestamps(tmp_path, state_db):
             freshness_column="occurred_at",
             freshness_threshold_hours=24,
             volume_zscore_threshold=3.0,
+            volume_method="ewma",
             freshness_column_source="object",
             freshness_threshold_hours_source="object",
             volume_zscore_threshold_source="global",
+            volume_method_source="global",
         )
     }
 
@@ -496,3 +504,76 @@ def test_freshness_staleness_proxy_no_trigger_with_changes(state_db, olly_config
     # Should NOT trigger because counts are changing
     proxy = [f for f in findings if f.table_name == "t"]
     assert proxy == []
+
+
+# --- Volume EWMA checks ---
+
+
+def test_volume_ewma_no_anomaly(state_db):
+    """Stable history with a normal value should not trigger EWMA anomaly."""
+    for count in [100, 102, 98, 101, 99]:
+        sid = state_db.create_snapshot()
+        state_db.store_volume_data(sid, [make_volume_record("main", "t", count)])
+
+    current = [make_volume_record("main", "t", 103)]
+    settings = Settings(volume_method="ewma")
+    findings = check_volume(current, state_db, settings)
+    assert findings == []
+
+
+def test_volume_ewma_spike(state_db):
+    """A large spike should be detected by EWMA."""
+    for count in [100, 102, 98, 101, 99]:
+        sid = state_db.create_snapshot()
+        state_db.store_volume_data(sid, [make_volume_record("main", "t", count)])
+
+    current = [make_volume_record("main", "t", 500)]
+    settings = Settings(volume_method="ewma")
+    findings = check_volume(current, state_db, settings)
+    assert len(findings) == 1
+    assert findings[0].check_type == "volume"
+    assert findings[0].details["method"] == "ewma"
+    assert findings[0].details["z_score"] > 3.0
+
+
+def test_volume_ewma_trending_no_false_positive(state_db):
+    """Gradual growth should not trigger EWMA anomaly (unlike z-score)."""
+    # Simulate steady growth: 100, 110, 120, 130, 140
+    for count in [100, 110, 120, 130, 140]:
+        sid = state_db.create_snapshot()
+        state_db.store_volume_data(sid, [make_volume_record("main", "t", count)])
+
+    # Next value continues the trend
+    current = [make_volume_record("main", "t", 150)]
+    settings = Settings(volume_method="ewma")
+    findings = check_volume(current, state_db, settings)
+    # EWMA should handle gradual trends without false positives
+    assert findings == []
+
+
+def test_volume_zscore_explicit_method(state_db):
+    """Explicit volume_method='zscore' should use z-score detection."""
+    for count in [100, 102, 98, 101, 99]:
+        sid = state_db.create_snapshot()
+        state_db.store_volume_data(sid, [make_volume_record("main", "t", count)])
+
+    current = [make_volume_record("main", "t", 500)]
+    settings = Settings(volume_method="zscore")
+    findings = check_volume(current, state_db, settings)
+    assert len(findings) == 1
+    assert findings[0].details["method"] == "zscore"
+
+
+def test_volume_per_table_method_override(state_db):
+    """Per-table method override should be respected."""
+    for count in [100, 102, 98, 101, 99]:
+        sid = state_db.create_snapshot()
+        state_db.store_volume_data(sid, [make_volume_record("main", "t", count)])
+
+    current = [make_volume_record("main", "t", 500)]
+    # Global is ewma, but override to zscore for this table
+    settings = Settings(volume_method="ewma")
+    methods = {("main", "t"): "zscore"}
+    findings = check_volume(current, state_db, settings, methods=methods)
+    assert len(findings) == 1
+    assert findings[0].details["method"] == "zscore"

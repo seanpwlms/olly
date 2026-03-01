@@ -248,13 +248,17 @@ def setup() -> OllyConfig:
         selection=Selection(include_schemas=["main"]),
         overrides=[Override(match="main.orders", freshness_column="updated_at")],
     )
+    source_nc = NamedConnection(
+        name="source",
+        connection=ConnectionConfig(type="duckdb", path="source.duckdb"),
+    )
+    target_nc = NamedConnection(
+        name="target",
+        connection=ConnectionConfig(type="duckdb", path="target.duckdb"),
+    )
     config = OllyConfig(
-        connections={"primary": nc},
+        connections={"primary": nc, "source": source_nc, "target": target_nc},
         settings=Settings(freshness_threshold_hours=24.0),
-        sources={
-            "source": "duckdb://source.duckdb",
-            "target": "duckdb://target.duckdb",
-        },
         dbt=DbtConfig(
             run_results_path="target/run_results.json",
             include_skipped=True,

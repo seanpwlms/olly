@@ -2,6 +2,9 @@
 
 Data quality framework that monitors data warehouses for schema changes, volume anomalies, freshness issues, cross-source integrity, and contract violations. Supports DuckDB, Postgres, BigQuery, and Snowflake via [Ibis](https://ibis-project.org/).
 
+By default, the schema checks are metadata-only, making it lightweight and low overhead.
+
+
 🚨 This should be considered experimental and subject to change.
 
 ## Install
@@ -13,7 +16,7 @@ uv add olly
 Install with an adapter:
 
 ```bash
-uv add "olly[duckdb]"    # or postgres, bigquery
+uv add "olly[duckdb]"    # or postgres, bigquery, snowflake
 ```
 
 ## Quickstart
@@ -24,14 +27,14 @@ olly snapshot             # capture current warehouse state
 olly check                # detect changes since last snapshot
 ```
 
-That's it. Olly compares consecutive snapshots and reports what changed.
+That's it. Olly compares consecutive snapshots and reports schema changes and freshness failures out of the box.
 
 ## What it checks
 
 | Check | What it detects | Severity |
 |-------|----------------|----------|
 | **Schema** | Added/removed tables, added/removed/changed columns, nullability changes | error or warning |
-| **Volume** | Row count anomalies using z-score over snapshot history | warning |
+| **Volume** | Row count anomalies using EWMA (default) or z-score over snapshot history | warning |
 | **Freshness** | Tables not updated within the configured threshold | warning |
 | **Integrity** | Row count or hash mismatches between source and target databases | error |
 | **Contracts** | Schema violations against declared Python contracts | error or warning |
@@ -72,6 +75,14 @@ olly check             Run data quality checks
   --connection NAME    Only check this connection
 olly config-explain    Show resolved config for each table
   --connection NAME    Only explain this connection
+olly unused            Show unused and stale tables
+  --json               Machine-readable JSON output
+  --verbose            Print detailed progress
+  --connection NAME    Only check this connection
+olly debug             Test connectivity to the configured warehouse
+  --connection NAME    Only test this connection
+olly clean             Delete the local state database
+  --yes                Skip confirmation prompt
 olly serve             Start the web dashboard
   --host HOST          Bind address (default: 127.0.0.1)
   --port PORT          Port (default: 8000)
@@ -142,10 +153,13 @@ Global defaults for check thresholds:
 [settings]
 freshness_threshold_hours = 24.0    # max age before flagging stale
 volume_zscore_threshold = 3.0       # z-score cutoff for volume anomalies
+volume_method = "ewma"              # "ewma" (default) or "zscore"
 history_depth = 30                  # snapshots to keep for trend analysis
 min_history_for_anomaly = 5         # minimum snapshots before volume checks run
 write_results = true                # persist findings to ~/.olly/<project-hash>/findings.json
 ```
+
+EWMA (Exponentially Weighted Moving Average) is the default volume method. It weights recent observations more heavily, making it better at handling trending tables without false positives. Use `"zscore"` for stationary tables where equal weighting of all history is preferred. Both methods can be overridden per table.
 
 ### Overrides
 
@@ -164,14 +178,18 @@ freshness_column = "updated_at"
 
 Use `olly config-explain` to see how overrides resolve for each table.
 
-### Cross-source integrity
+### Cross-connection integrity
 
-Compare data between two databases. Define named sources in TOML and syncs in Python:
+Compare data between two connections. Syncs reference named connections from your `[connections.*]` config:
 
 ```toml
-[sources]
-warehouse = "duckdb:///warehouse.duckdb"
-replica = "postgresql://${PGUSER}:${PGPASSWORD}@replica:5432/db"
+[connections.warehouse]
+type = "duckdb"
+path = "warehouse.duckdb"
+
+[connections.replica]
+type = "postgres"
+url = "postgresql://${PGUSER}:${PGPASSWORD}@replica:5432/db"
 
 [integrity]
 module = "integrity_syncs.py"   # file path or dotted module name
@@ -184,8 +202,8 @@ from olly.models import IntegrityMethod, Sync, WindowOp, WindowSpec
 syncs = [
     Sync(
         name="orders_count",
-        source="warehouse",
-        target="replica",
+        source="warehouse",        # references [connections.warehouse]
+        target="replica",          # references [connections.replica]
         source_table="main.orders",
         target_table="public.orders",
         method=IntegrityMethod.COUNT,
@@ -276,6 +294,19 @@ spike_threshold = 3.0        # z-score threshold for cost spike alerts
 
 When `olly check` runs, it shows a cost summary with top tables and top users by spend. Cost spikes are flagged as findings when the current period's total exceeds the historical mean by more than `spike_threshold` standard deviations.
 
+### Slack alerts
+
+Send findings to a Slack channel via an [incoming webhook](https://api.slack.com/messaging/webhooks):
+
+```toml
+[slack]
+webhook_url = "https://hooks.slack.com/services/T00/B00/xxxx"
+on_error = true       # send on errors (default: true)
+on_warning = false    # send on warnings (default: false)
+```
+
+When `olly check` produces qualifying findings, a summary is posted to the configured webhook.
+
 ## Python API
 
 All functionality is available as importable Python modules:
@@ -313,7 +344,7 @@ uv add "olly[dashboard]"
 olly serve
 ```
 
-The dashboard reads from `~/.olly/<project-hash>/findings.json` (written by `olly check`) and displays findings in a web UI at `http://127.0.0.1:8000`.
+The dashboard reads from a state database (written by `olly check`) and displays findings in a web UI at `http://127.0.0.1:8000`.
 
 ## How it works
 

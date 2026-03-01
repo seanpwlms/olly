@@ -19,6 +19,7 @@ dependencies = [
 duckdb = ["ibis-framework[duckdb]"]
 postgres = ["ibis-framework[postgres]"]
 bigquery = ["ibis-framework[bigquery]"]
+snowflake = ["ibis-framework[snowflake]"]
 dashboard = ["fastapi>=0.115.0", "uvicorn[standard]>=0.32.0"]
 
 [project.scripts]
