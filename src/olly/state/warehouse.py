@@ -290,6 +290,17 @@ class WarehouseStateStore(BaseStateStore):
             f"details {t} NOT NULL)"
         )
 
+        dispositions = self._table("finding_dispositions")
+        self._exec(
+            f"CREATE TABLE IF NOT EXISTS {dispositions} ("
+            f"id {i} NOT NULL, "
+            f"finding_id {i} NOT NULL, "
+            f"disposition {t} NOT NULL, "
+            f"comment {t} NOT NULL, "
+            f"created_at {t} NOT NULL, "
+            f"created_by {t} NOT NULL)"
+        )
+
         if self._indexes:
             self._exec(
                 f"CREATE INDEX IF NOT EXISTS idx_wss_schema_sid "
@@ -315,6 +326,10 @@ class WarehouseStateStore(BaseStateStore):
                 f"CREATE INDEX IF NOT EXISTS idx_wss_dbt_findings_created "
                 f"ON {dbt_findings}(created_at)"
             )
+            self._exec(
+                f"CREATE INDEX IF NOT EXISTS idx_wss_dispositions_fid "
+                f"ON {dispositions}(finding_id)"
+            )
 
         logger.debug("Initialized warehouse state in schema %s", self._schema)
 
@@ -325,6 +340,29 @@ class WarehouseStateStore(BaseStateStore):
         self._exec(
             f"INSERT INTO {self._table('cost_runs')} (id, created_at, connection_name) "
             f"VALUES ({new_id}, '{_escape(now)}', '{_escape(connection_name)}')"
+        )
+        return new_id
+
+    def set_disposition(
+        self, finding_id: int, disposition: str,
+        comment: str = "", created_by: str = "",
+    ) -> int:
+        """Override to use _next_id for warehouse backends."""
+        from datetime import datetime, timezone
+
+        from olly.models import Disposition
+
+        valid = {d.value for d in Disposition}
+        if disposition not in valid:
+            msg = f"Invalid disposition {disposition!r}, must be one of {valid}"
+            raise ValueError(msg)
+        now = datetime.now(timezone.utc).isoformat()
+        new_id = self._next_id("finding_dispositions")
+        self._exec(
+            f"INSERT INTO {self._table('finding_dispositions')} "
+            f"(id, finding_id, disposition, comment, created_at, created_by) "
+            f"VALUES ({new_id}, {finding_id}, '{_escape(disposition)}', "
+            f"'{_escape(comment)}', '{_escape(now)}', '{_escape(created_by)}')"
         )
         return new_id
 

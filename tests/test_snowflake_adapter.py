@@ -5,54 +5,10 @@ import pytest
 
 from olly.adapters.snowflake import SnowflakeAdapter, _split_schema
 from olly.models import TableInfo
-
-
-# ---------------------------------------------------------------------------
-# Stubs for unit-testing without a real Snowflake connection
-# ---------------------------------------------------------------------------
-
-
-class _StubResult:
-    def __init__(self, rows):
-        self._rows = list(rows)
-        self.description = [("col",)]
-
-    def fetchone(self):
-        return self._rows[0] if self._rows else None
-
-    def fetchall(self):
-        return self._rows
-
-
-class _StubConn:
-    def __init__(self, rows_per_call=None):
-        self._rows_per_call = list(rows_per_call or [])
-        self.queries: list[str] = []
-
-    def raw_sql(self, sql):
-        self.queries.append(sql)
-        rows = self._rows_per_call.pop(0) if self._rows_per_call else []
-        return _StubResult(rows)
-
-
-def _make_adapter(rows_per_call=None, *, use_account_usage=False):
-    adapter = SnowflakeAdapter.__new__(SnowflakeAdapter)
-    adapter._conn = _StubConn(rows_per_call)
-    adapter._use_account_usage = use_account_usage
-    adapter._default_database = None
-    return adapter
-
-
-def _make_error_adapter():
-    class _ErrorConn:
-        def raw_sql(self, sql):
-            raise Exception("connection lost")
-
-    adapter = SnowflakeAdapter.__new__(SnowflakeAdapter)
-    adapter._conn = _ErrorConn()
-    adapter._use_account_usage = False
-    adapter._default_database = None
-    return adapter
+from helpers import (
+    make_snowflake_adapter,
+    make_snowflake_error_adapter,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -90,27 +46,27 @@ class TestSplitSchema:
 
 class TestHelpers:
     def test_format_table_three_part(self):
-        adapter = _make_adapter()
+        adapter = make_snowflake_adapter()
         assert (
             adapter._format_table("MYDB.PUBLIC", "orders") == '"MYDB"."PUBLIC"."orders"'
         )
 
     def test_format_table_quoting(self):
-        adapter = _make_adapter()
+        adapter = make_snowflake_adapter()
         assert (
             adapter._format_table("my-db.my schema", "my table")
             == '"my-db"."my schema"."my table"'
         )
 
     def test_quote_identifier(self):
-        assert _make_adapter()._quote_identifier("col") == '"col"'
+        assert make_snowflake_adapter()._quote_identifier("col") == '"col"'
 
     def test_build_row_expr_single(self):
-        result = _make_adapter()._build_row_expr(["id"])
+        result = make_snowflake_adapter()._build_row_expr(["id"])
         assert result == "COALESCE(CAST(\"id\" AS VARCHAR), '')"
 
     def test_build_row_expr_multiple(self):
-        result = _make_adapter()._build_row_expr(["id", "name"])
+        result = make_snowflake_adapter()._build_row_expr(["id", "name"])
         assert "|| '|' ||" in result
         assert 'CAST("id" AS VARCHAR)' in result
         assert 'CAST("name" AS VARCHAR)' in result
@@ -123,21 +79,21 @@ class TestHelpers:
 
 class TestFetchCount:
     def test_without_where(self):
-        adapter = _make_adapter(rows_per_call=[[(5,)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[(5,)]])
         assert adapter.fetch_count("MYDB.PUBLIC", "orders", None) == 5
         assert adapter._conn.queries == [
             'SELECT COUNT(*) FROM "MYDB"."PUBLIC"."orders"'
         ]
 
     def test_with_where(self):
-        adapter = _make_adapter(rows_per_call=[[(2,)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[(2,)]])
         assert adapter.fetch_count("MYDB.PUBLIC", "orders", "amount >= 10") == 2
         assert "WHERE amount >= 10" in adapter._conn.queries[0]
 
 
 class TestFetchCountDistinct:
     def test_sql(self):
-        adapter = _make_adapter(rows_per_call=[[(3,)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[(3,)]])
         assert (
             adapter.fetch_count_distinct(
                 "MYDB.PUBLIC", "orders", "customer_id", "amount > 0"
@@ -151,7 +107,7 @@ class TestFetchCountDistinct:
 
 class TestFetchHash:
     def test_uses_listagg(self):
-        adapter = _make_adapter(rows_per_call=[[("abc123",)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[("abc123",)]])
         assert (
             adapter.fetch_hash("MYDB.PUBLIC", "orders", ["id", "amount"], "id", None)
             == "abc123"
@@ -161,7 +117,7 @@ class TestFetchHash:
         assert "WITHIN GROUP (ORDER BY order_col)" in query
 
     def test_with_where(self):
-        adapter = _make_adapter(rows_per_call=[[("def456",)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[("def456",)]])
         assert (
             adapter.fetch_hash("MYDB.PUBLIC", "orders", ["id"], "id", "id > 0")
             == "def456"
@@ -176,7 +132,7 @@ class TestFetchHash:
 
 class TestFetchRowCounts:
     def test_skips_views(self):
-        adapter = _make_adapter(rows_per_call=[[(10,)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[(10,)]])
         infos = [
             TableInfo(
                 schema_name="DB.SCH", table_name="t1", table_type="TABLE", columns=[]
@@ -191,7 +147,7 @@ class TestFetchRowCounts:
         assert records[0].row_count == 10
 
     def test_account_usage_mode(self):
-        adapter = _make_adapter(
+        adapter = make_snowflake_adapter(
             rows_per_call=[[("DB", "SCH", "t1", 42)]],
             use_account_usage=True,
         )
@@ -205,7 +161,7 @@ class TestFetchRowCounts:
         assert "ACCOUNT_USAGE" in adapter._conn.queries[0]
 
     def test_error_raises(self):
-        adapter = _make_error_adapter()
+        adapter = make_snowflake_error_adapter()
         infos = [
             TableInfo(
                 schema_name="DB.SCH", table_name="t1", table_type="TABLE", columns=[]
@@ -222,21 +178,21 @@ class TestFetchRowCounts:
 
 class TestFetchMaxTimestamp:
     def test_returns_none_on_null(self):
-        adapter = _make_adapter(rows_per_call=[[(None,)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[(None,)]])
         assert adapter.fetch_max_timestamp("DB.SCH", "orders", "updated_at") is None
 
     def test_three_part_name_in_sql(self):
-        adapter = _make_adapter(rows_per_call=[[(None,)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[(None,)]])
         adapter.fetch_max_timestamp("DB.SCH", "orders", "updated_at")
         assert '"DB"."SCH"."orders"' in adapter._conn.queries[0]
 
     def test_returns_datetime(self):
         ts = datetime(2026, 1, 15, 12, 0, 0)
-        adapter = _make_adapter(rows_per_call=[[(ts,)]])
+        adapter = make_snowflake_adapter(rows_per_call=[[(ts,)]])
         assert adapter.fetch_max_timestamp("DB.SCH", "orders", "updated_at") == ts
 
     def test_error_raises(self):
-        adapter = _make_error_adapter()
+        adapter = make_snowflake_error_adapter()
         with pytest.raises(RuntimeError, match="Failed to fetch max timestamp"):
             adapter.fetch_max_timestamp("DB.SCH", "orders", "updated_at")
 
@@ -248,7 +204,7 @@ class TestFetchMaxTimestamp:
 
 class TestListSchemas:
     def test_account_usage_mode(self):
-        adapter = _make_adapter(
+        adapter = make_snowflake_adapter(
             rows_per_call=[[("MYDB", "PUBLIC"), ("MYDB", "RAW")]],
             use_account_usage=True,
         )
@@ -256,7 +212,7 @@ class TestListSchemas:
         assert "ACCOUNT_USAGE.SCHEMATA" in adapter._conn.queries[0]
 
     def test_information_schema_mode(self):
-        adapter = _make_adapter(
+        adapter = make_snowflake_adapter(
             rows_per_call=[
                 [("ignored", "MYDB")],
                 [("PUBLIC",), ("RAW",)],
@@ -266,6 +222,8 @@ class TestListSchemas:
         assert "SHOW DATABASES" in adapter._conn.queries[0]
 
     def test_skips_inaccessible_db(self):
+        from helpers import SnowflakeStubResult
+
         class _ErrorOnSecondConn:
             def __init__(self):
                 self.queries: list[str] = []
@@ -275,9 +233,9 @@ class TestListSchemas:
                 self.queries.append(sql)
                 self._call_count += 1
                 if self._call_count == 1:
-                    return _StubResult([("ignored", "DB1"), ("ignored", "DB2")])
+                    return SnowflakeStubResult([("ignored", "DB1"), ("ignored", "DB2")])
                 if self._call_count == 2:
-                    return _StubResult([("PUBLIC",)])
+                    return SnowflakeStubResult([("PUBLIC",)])
                 raise RuntimeError("no access")
 
         adapter = SnowflakeAdapter.__new__(SnowflakeAdapter)
@@ -294,7 +252,7 @@ class TestListSchemas:
 
 class TestFetchSchemaInfo:
     def test_builds_table_infos(self):
-        adapter = _make_adapter(
+        adapter = make_snowflake_adapter(
             rows_per_call=[
                 [("MYDB", "PUBLIC", "orders", "BASE TABLE")],
                 [
@@ -311,7 +269,7 @@ class TestFetchSchemaInfo:
         assert tables[0].columns[1].is_nullable is True
 
     def test_view_type(self):
-        adapter = _make_adapter(
+        adapter = make_snowflake_adapter(
             rows_per_call=[
                 [("MYDB", "PUBLIC", "v1", "VIEW")],
                 [("MYDB", "PUBLIC", "v1", "id", "NUMBER", "NO")],
@@ -320,7 +278,7 @@ class TestFetchSchemaInfo:
         assert adapter.fetch_schema_info(["MYDB.PUBLIC"])[0].table_type == "VIEW"
 
     def test_account_usage_queries(self):
-        adapter = _make_adapter(
+        adapter = make_snowflake_adapter(
             rows_per_call=[
                 [("MYDB", "PUBLIC", "t1", "BASE TABLE")],
                 [("MYDB", "PUBLIC", "t1", "id", "NUMBER", "NO")],
@@ -368,19 +326,19 @@ class TestFetchTableSchema:
 class TestScalarEdgeCases:
     def test_scalar_error(self):
         with pytest.raises(RuntimeError, match="Failed to run query"):
-            _make_error_adapter()._fetch_scalar("SELECT 1", "test")
+            make_snowflake_error_adapter()._fetch_scalar("SELECT 1", "test")
 
     def test_scalar_str_error(self):
         with pytest.raises(RuntimeError, match="Failed to run query"):
-            _make_error_adapter()._fetch_scalar_str("SELECT 1", "test")
+            make_snowflake_error_adapter()._fetch_scalar_str("SELECT 1", "test")
 
     def test_scalar_null(self):
-        assert _make_adapter(rows_per_call=[[(None,)]])._fetch_scalar("Q", "t") == 0
+        assert make_snowflake_adapter(rows_per_call=[[(None,)]])._fetch_scalar("Q", "t") == 0
 
     def test_scalar_str_null(self):
         assert (
-            _make_adapter(rows_per_call=[[(None,)]])._fetch_scalar_str("Q", "t") is None
+            make_snowflake_adapter(rows_per_call=[[(None,)]])._fetch_scalar_str("Q", "t") is None
         )
 
     def test_scalar_str_empty(self):
-        assert _make_adapter(rows_per_call=[[]])._fetch_scalar_str("Q", "t") is None
+        assert make_snowflake_adapter(rows_per_call=[[]])._fetch_scalar_str("Q", "t") is None

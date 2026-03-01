@@ -1,3 +1,5 @@
+import pytest
+
 from olly.adapter import connect_typed
 from olly.checks.freshness import check_freshness
 from olly.checks.schema import check_schema
@@ -377,10 +379,9 @@ def test_freshness_staleness_proxy(state_db, olly_config):
 
 
 def test_freshness_missing_column(tmp_path, state_db):
-    """Freshness check handles missing column gracefully."""
+    """Missing freshness column raises RuntimeError from the adapter."""
     import duckdb
 
-    # Create a table WITHOUT the freshness column
     db_path = tmp_path / "missing_col_test.duckdb"
     conn = duckdb.connect(str(db_path))
     conn.execute("CREATE TABLE events (id INTEGER, name VARCHAR)")
@@ -391,8 +392,6 @@ def test_freshness_missing_column(tmp_path, state_db):
 
     adapter = DuckDBAdapter(str(db_path))
     tables = adapter.fetch_schema_info(["main"])
-
-    # Filter to just the events table
     events_tables = [t for t in tables if t.table_name == "events"]
 
     overrides_map = {
@@ -406,15 +405,8 @@ def test_freshness_missing_column(tmp_path, state_db):
         )
     }
 
-    # Should raise or return empty, not crash
-    try:
-        findings = check_freshness(adapter, events_tables, Settings(), overrides_map, state_db)
-        # If it doesn't raise, it should return a finding about the missing column
-        # or return empty (both are acceptable behaviors)
-        assert isinstance(findings, list)
-    except RuntimeError as e:
-        # Acceptable - adapter reports column doesn't exist
-        assert "occurred_at" in str(e).lower() or "column" in str(e).lower()
+    with pytest.raises(RuntimeError, match="Failed to fetch max timestamp"):
+        check_freshness(adapter, events_tables, Settings(), overrides_map, state_db)
 
 
 def test_freshness_future_timestamps(tmp_path, state_db):

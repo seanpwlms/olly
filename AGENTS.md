@@ -40,7 +40,7 @@ CLI is a thin wrapper (`src/olly/__init__.py` → `src/olly/cli/`). All logic li
 - `checks/integrity.py` — cross-source data integrity syncs (`load_syncs`, `run_syncs`; methods: COUNT, HASH, PK, COUNT_DISTINCT)
 - `checks/contracts.py` — validate warehouse schema against declared contracts
 - `checks/dbt.py` — parse dbt `run_results.json` for failures
-- `dashboard/` — FastAPI + Jinja2 web UI (`uv run olly serve`)
+- `dashboard/` — FastAPI JSON API + React SPA (`uv run olly serve`). See `dashboard/AGENTS.md` for detailed dashboard development guide.
 
 Key entry points for programmatic use: `cli/snapshot.py:take_snapshot()`, `checker.py:run_checks()`.
 

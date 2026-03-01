@@ -1,21 +1,12 @@
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { useConnection } from "../hooks/useConnection";
 import { useOverview } from "../hooks/queries";
 import { StatCard } from "../components/StatCard";
 import { StatsRow } from "../components/StatsRow";
 import { ErrorState } from "../components/ErrorState";
 import { SkeletonStatCards, SkeletonChart, SkeletonTable } from "../components/Skeleton";
-import {
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-  Brush,
-} from "recharts";
+import { DispositionBar } from "../components/DispositionBar";
+import { FindingsTrendChart } from "../components/FindingsTrendChart";
 
 function formatTrend(current: number, previous: number | undefined): { trend: string; direction: "up" | "down" | "flat" } {
   if (previous === undefined) return { trend: "", direction: "flat" };
@@ -29,31 +20,17 @@ function formatTrend(current: number, previous: number | undefined): { trend: st
   };
 }
 
-function formatDateLabel(v: string): string {
-  const d = new Date(v + "T00:00:00");
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 export function IndexPage() {
   const { connection } = useConnection();
-  const navigate = useNavigate();
   const { data, isLoading, isError, refetch } = useOverview(connection);
 
   if (isError) return <ErrorState message="Failed to load dashboard data." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <><SkeletonStatCards count={3} /><SkeletonChart /><SkeletonTable rows={5} cols={4} /></>;
 
-  const { stats, dbt_stats, findings_by_connection, findings_trend, top_tables, prev_stats } = data;
+  const { stats, dbt_stats, findings_by_connection, findings_trend, top_tables, prev_stats, disposition_counts } = data;
 
   const errorTrend = formatTrend(stats.error_count, prev_stats?.error_count);
   const warningTrend = formatTrend(stats.warning_count, prev_stats?.warning_count);
-
-  const trendData = findings_trend.map((p) => ({
-    ...p,
-    label: p.timestamp.slice(0, 10),
-  }));
-
-  const grid = "var(--chart-grid)";
-  const axis = "var(--chart-axis)";
 
   const isHealthy = stats.error_count === 0 && stats.warning_count === 0;
 
@@ -103,6 +80,15 @@ export function IndexPage() {
         )}
       </StatsRow>
 
+      {!isHealthy && disposition_counts && (
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Disposition Status</h2>
+          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm px-5 py-4">
+            <DispositionBar counts={disposition_counts} />
+          </div>
+        </section>
+      )}
+
       {Object.keys(findings_by_connection).length > 1 && (
         <section className="mb-6">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Findings by Connection</h2>
@@ -135,40 +121,7 @@ export function IndexPage() {
         </section>
       )}
 
-      {trendData.length > 1 && (
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Findings Trend</h2>
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm p-4">
-            <ResponsiveContainer width="100%" height={280}>
-              <AreaChart
-                data={trendData}
-                onClick={(state) => {
-                  if (state?.activePayload?.[0]?.payload?.timestamp) {
-                    const ts = state.activePayload[0].payload.timestamp as string;
-                    void navigate({ to: "/findings", search: { q: ts.slice(0, 10) } });
-                  }
-                }}
-                style={{ cursor: "pointer" }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke={grid} />
-                <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke={axis} tickFormatter={formatDateLabel} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} stroke={axis} />
-                <Tooltip
-                  labelFormatter={(v: string) => formatDateLabel(v)}
-                  formatter={(v: number, name: string) => [v.toLocaleString(), name]}
-                  contentStyle={{ backgroundColor: "var(--chart-bg)", border: "1px solid var(--chart-grid)" }}
-                />
-                <Legend />
-                <Area type="monotone" dataKey="errors" name="Errors" stroke="#ef4444" fill="#fee2e2" strokeWidth={2} />
-                <Area type="monotone" dataKey="warnings" name="Warnings" stroke="#f59e0b" fill="#fef3c7" strokeWidth={2} />
-                {trendData.length > 5 && (
-                  <Brush dataKey="label" height={24} stroke="var(--chart-axis)" fill="var(--chart-bg)" tickFormatter={formatDateLabel} />
-                )}
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </section>
-      )}
+      <FindingsTrendChart data={findings_trend} />
 
       {top_tables.length > 0 && (
         <section className="mb-6">

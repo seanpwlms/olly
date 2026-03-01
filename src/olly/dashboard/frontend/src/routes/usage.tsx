@@ -8,6 +8,19 @@ import { EmptyState } from "../components/EmptyState";
 import { CostDailyChart } from "../components/CostDailyChart";
 import { ErrorState } from "../components/ErrorState";
 import { SkeletonStatCards, SkeletonChart, SkeletonTable } from "../components/Skeleton";
+import { DataTable, type Column } from "../components/DataTable";
+import type { Finding, LeastUsedTable } from "../types";
+
+interface CostTable {
+  schema: string;
+  table: string;
+  cost_usd: number;
+}
+
+interface CostUser {
+  user: string;
+  cost_usd: number;
+}
 
 export function UsagePage() {
   const { connection } = useConnection();
@@ -17,6 +30,88 @@ export function UsagePage() {
   if (isLoading || !data) return <><SkeletonStatCards count={3} /><SkeletonChart /><SkeletonTable rows={5} cols={4} /></>;
 
   const { stats, usage_findings, cost_summary, cost_daily, least_used } = data;
+
+  const usageFindingsColumns: Column<Finding>[] = [
+    {
+      key: "table",
+      header: "Table",
+      render: (f) => (
+        <Link
+          to="/table/$schema/$table"
+          params={{ schema: f.schema_name, table: f.table_name }}
+          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+        >
+          {f.schema_name}.{f.table_name}
+        </Link>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      render: (f) =>
+        f.details.last_queried_at == null ? (
+          <Badge type="unused">unused</Badge>
+        ) : (
+          <Badge type="stale">stale</Badge>
+        ),
+    },
+    {
+      key: "last_queried",
+      header: "Last Queried",
+      render: (f) =>
+        f.details.last_queried_at
+          ? String(f.details.last_queried_at).slice(0, 10)
+          : "\u2014",
+    },
+    {
+      key: "days_inactive",
+      header: "Days Inactive",
+      render: (f) =>
+        f.details.days_unused != null
+          ? Math.floor(f.details.days_unused as number)
+          : "\u2014",
+    },
+  ];
+
+  const leastUsedColumns: Column<LeastUsedTable>[] = [
+    {
+      key: "table",
+      header: "Table",
+      render: (t) => (
+        <Link
+          to="/table/$schema/$table"
+          params={{ schema: t.schema_name, table: t.table_name }}
+          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+        >
+          {t.schema_name}.{t.table_name}
+        </Link>
+      ),
+    },
+    { key: "query_count", header: "Query Count", render: (t) => t.query_count },
+    { key: "cost_usd", header: "Cost (USD)", render: (t) => `$${t.estimated_cost_usd.toFixed(2)}` },
+  ];
+
+  const topTableColumns: Column<CostTable>[] = [
+    {
+      key: "table",
+      header: "Table",
+      render: (t) => (
+        <Link
+          to="/table/$schema/$table"
+          params={{ schema: t.schema, table: t.table }}
+          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+        >
+          {t.schema}.{t.table}
+        </Link>
+      ),
+    },
+    { key: "cost_usd", header: "Cost (USD)", render: (t) => `$${t.cost_usd.toFixed(2)}` },
+  ];
+
+  const topUserColumns: Column<CostUser>[] = [
+    { key: "user", header: "User", render: (u) => u.user },
+    { key: "cost_usd", header: "Cost (USD)", render: (u) => `$${u.cost_usd.toFixed(2)}` },
+  ];
 
   return (
     <>
@@ -36,48 +131,11 @@ export function UsagePage() {
       <section className="mb-6">
         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Unused &amp; Stale Tables</h2>
         {usage_findings.length > 0 ? (
-          <table className="w-full bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden mb-6">
-            <thead>
-              <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Table</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Last Queried</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Days Inactive</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {usage_findings.map((f, i) => (
-                <tr key={i} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                  <td className="px-4 py-3 text-sm">
-                    <Link
-                      to="/table/$schema/$table"
-                      params={{ schema: f.schema_name, table: f.table_name }}
-                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-                    >
-                      {f.schema_name}.{f.table_name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3">
-                    {f.details.last_queried_at == null ? (
-                      <Badge type="unused">unused</Badge>
-                    ) : (
-                      <Badge type="stale">stale</Badge>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                    {f.details.last_queried_at
-                      ? String(f.details.last_queried_at).slice(0, 10)
-                      : "\u2014"}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
-                    {f.details.days_unused != null
-                      ? Math.floor(f.details.days_unused as number)
-                      : "\u2014"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable
+            data={usage_findings}
+            columns={usageFindingsColumns}
+            rowKey={(f) => `${f.schema_name}.${f.table_name}`}
+          />
         ) : (
           <EmptyState message="No unused or stale tables detected." />
         )}
@@ -86,32 +144,11 @@ export function UsagePage() {
       {least_used.length > 0 && (
         <section className="mb-6">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Top 10 Least Used Tables</h2>
-          <table className="w-full bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden mb-6">
-            <thead>
-              <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Table</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Query Count</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Cost (USD)</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {least_used.map((t) => (
-                <tr key={`${t.schema_name}.${t.table_name}`} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                  <td className="px-4 py-3 text-sm">
-                    <Link
-                      to="/table/$schema/$table"
-                      params={{ schema: t.schema_name, table: t.table_name }}
-                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-                    >
-                      {t.schema_name}.{t.table_name}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{t.query_count}</td>
-                  <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">${t.estimated_cost_usd.toFixed(2)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <DataTable
+            data={least_used}
+            columns={leastUsedColumns}
+            rowKey={(t) => `${t.schema_name}.${t.table_name}`}
+          />
         </section>
       )}
 
@@ -124,52 +161,22 @@ export function UsagePage() {
           {cost_summary.top_tables && cost_summary.top_tables.length > 0 && (
             <>
               <h3 className="text-base font-semibold text-gray-700 dark:text-gray-300 mb-2 mt-4">Top Tables by Cost</h3>
-              <table className="w-full bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden mb-6">
-                <thead>
-                  <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Table</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Cost (USD)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {cost_summary.top_tables.map((t) => (
-                    <tr key={`${t.schema}.${t.table}`} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                      <td className="px-4 py-3 text-sm">
-                        <Link
-                          to="/table/$schema/$table"
-                          params={{ schema: t.schema, table: t.table }}
-                          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-                        >
-                          {t.schema}.{t.table}
-                        </Link>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">${t.cost_usd.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <DataTable
+                data={cost_summary.top_tables}
+                columns={topTableColumns}
+                rowKey={(t) => `${t.schema}.${t.table}`}
+              />
             </>
           )}
 
           {cost_summary.top_users && cost_summary.top_users.length > 0 && (
             <>
               <h3 className="text-base font-semibold text-gray-700 dark:text-gray-300 mb-2 mt-4">Top Users by Cost</h3>
-              <table className="w-full bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden mb-6">
-                <thead>
-                  <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">User</th>
-                    <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Cost (USD)</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                  {cost_summary.top_users.map((u) => (
-                    <tr key={u.user} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                      <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{u.user}</td>
-                      <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">${u.cost_usd.toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <DataTable
+                data={cost_summary.top_users}
+                columns={topUserColumns}
+                rowKey={(u) => u.user}
+              />
             </>
           )}
         </section>

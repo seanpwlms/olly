@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
-from olly.models import ColumnInfo, CostRecord, DbtFinding, Finding, TableInfo, VolumeRecord
+from olly.models import ColumnInfo, CostRecord, DbtFinding, Disposition, Finding, TableInfo, VolumeRecord
 
 if TYPE_CHECKING:
     from olly.config import OllyConfig
@@ -58,8 +58,6 @@ class BaseStateStore(ABC):
     @abstractmethod
     def clean(self) -> None:
         """Delete all state data. No-op for warehouse-backed stores."""
-
-    # --- Context manager ---
 
     def __enter__(self) -> Self:
         return self
@@ -539,63 +537,94 @@ class BaseStateStore(ABC):
         )
         logger.debug("Stored %d dbt findings", len(dbt_findings))
 
-    def get_latest_findings(
-        self, connection_name: str | None = None
-    ) -> list[Finding]:
+    _FINDING_SELECT = (
+        "SELECT id, connection_name, check_type, severity, "
+        "schema_name, table_name, description, details, created_at"
+    )
+
+    def get_latest_findings(self, connection_name: str | None = None) -> list[Finding]:
         """Return findings from the most recent check run only."""
         last_check = self.get_last_check_time()
         if not last_check:
             return []
+        t = self._table("findings")
+        params: dict[str, Any] = {"created_at": last_check}
+        where = "WHERE created_at = :created_at"
         if connection_name is not None:
-            rows = self._query(
-                "SELECT connection_name, check_type, severity, schema_name, "
-                f"table_name, description, details "  # noqa: S608
-                f"FROM {self._table('findings')} "
-                "WHERE created_at = :created_at AND connection_name = :connection_name",
-                {"created_at": last_check, "connection_name": connection_name},
-            )
-        else:
-            rows = self._query(
-                "SELECT connection_name, check_type, severity, schema_name, "
-                f"table_name, description, details "  # noqa: S608
-                f"FROM {self._table('findings')} WHERE created_at = :created_at",
-                {"created_at": last_check},
-            )
+            where += " AND connection_name = :connection_name"
+            params["connection_name"] = connection_name
+        rows = self._query(f"{self._FINDING_SELECT} FROM {t} {where}", params)  # noqa: S608
         return self._rows_to_findings(rows)
 
-    def get_findings_history(
-        self, limit: int = 100, connection_name: str | None = None
-    ) -> list[Finding]:
+    def get_findings_history(self, limit: int = 100, connection_name: str | None = None) -> list[Finding]:
+        t = self._table("findings")
+        params: dict[str, Any] = {"limit": limit}
+        where = ""
         if connection_name is not None:
-            rows = self._query(
-                "SELECT connection_name, check_type, severity, schema_name, "
-                f"table_name, description, details "  # noqa: S608
-                f"FROM {self._table('findings')} WHERE connection_name = :connection_name "
-                "ORDER BY created_at DESC LIMIT :limit",
-                {"connection_name": connection_name, "limit": limit},
-            )
-        else:
-            rows = self._query(
-                "SELECT connection_name, check_type, severity, schema_name, "
-                f"table_name, description, details "  # noqa: S608
-                f"FROM {self._table('findings')} ORDER BY created_at DESC LIMIT :limit",
-                {"limit": limit},
-            )
+            where = "WHERE connection_name = :connection_name "
+            params["connection_name"] = connection_name
+        rows = self._query(
+            f"{self._FINDING_SELECT} FROM {t} {where}ORDER BY created_at DESC LIMIT :limit",  # noqa: S608
+            params,
+        )
         return self._rows_to_findings(rows)
 
     def _rows_to_findings(self, rows: list[tuple]) -> list[Finding]:
         return [
-            Finding(
-                connection_name=r[0],
-                check_type=r[1],
-                severity=r[2],
-                schema_name=r[3],
-                table_name=r[4],
-                description=r[5],
-                details=json.loads(r[6]) if r[6] else {},
-            )
+            Finding(id=r[0], connection_name=r[1], check_type=r[2], severity=r[3],
+                    schema_name=r[4], table_name=r[5], description=r[6],
+                    details=json.loads(r[7]) if r[7] else {},
+                    created_at=r[8] if len(r) > 8 and r[8] else "")
             for r in rows
         ]
+
+    # --- Dispositions ---
+
+    _DISPOSITION_COLS = ("id", "finding_id", "disposition", "comment", "created_at", "created_by")
+
+    def set_disposition(
+        self, finding_id: int, disposition: str,
+        comment: str = "", created_by: str = "",
+    ) -> int:
+        """Record a disposition change. Returns the disposition event ID."""
+        valid = {d.value for d in Disposition}
+        if disposition not in valid:
+            msg = f"Invalid disposition {disposition!r}, must be one of {valid}"
+            raise ValueError(msg)
+        now = datetime.now(timezone.utc).isoformat()
+        lastrowid = self._execute(
+            f"INSERT INTO {self._table('finding_dispositions')} "  # noqa: S608
+            "(finding_id, disposition, comment, created_at, created_by) "
+            "VALUES (:finding_id, :disposition, :comment, :created_at, :created_by)",
+            {"finding_id": finding_id, "disposition": disposition,
+             "comment": comment, "created_at": now, "created_by": created_by},
+        )
+        assert lastrowid is not None
+        return lastrowid
+
+    def get_current_dispositions(self, finding_ids: list[int]) -> dict[int, str]:
+        """Return {finding_id: disposition} for the latest disposition per finding."""
+        if not finding_ids:
+            return {}
+        ids_csv = ", ".join(str(fid) for fid in finding_ids)
+        t = self._table("finding_dispositions")
+        rows = self._query(
+            f"SELECT d.finding_id, d.disposition FROM {t} d "  # noqa: S608
+            f"INNER JOIN (SELECT finding_id, MAX(id) AS max_id FROM {t} "
+            f"WHERE finding_id IN ({ids_csv}) GROUP BY finding_id) "
+            "latest ON d.id = latest.max_id",
+        )
+        return {r[0]: r[1] for r in rows}
+
+    def get_disposition_history(self, finding_id: int) -> list[dict]:
+        """Return disposition change history for a finding, newest first."""
+        rows = self._query(
+            f"SELECT id, finding_id, disposition, comment, created_at, created_by "  # noqa: S608
+            f"FROM {self._table('finding_dispositions')} "
+            "WHERE finding_id = :finding_id ORDER BY id DESC",
+            {"finding_id": finding_id},
+        )
+        return [dict(zip(self._DISPOSITION_COLS, r)) for r in rows]
 
     def get_latest_dbt_findings(self) -> list[DbtFinding]:
         """Return dbt findings from the most recent check run only."""

@@ -6,7 +6,6 @@ from typing import Any, cast
 
 from olly.checks.cost import check_cost, summarize_costs, _detect_cost_anomalies
 from olly.config import ConnectionConfig, CostConfig, NamedConnection, OllyConfig, Selection
-from olly.models import CostRecord
 from olly.state import StateDB
 from conftest import make_cost_record, FakeAdapter
 
@@ -215,30 +214,14 @@ def test_config_write_cost(tmp_path):
 
 def test_fetch_query_costs_adapter():
     """Test that fetch_query_costs builds correct SQL and parses results."""
+    from helpers import make_bigquery_adapter
 
-    class MockRow:
-        def __init__(self, vals):
-            self._vals = vals
-
-        def values(self):
-            return self._vals
-
-    class MockConnection:
-        def __init__(self):
-            self.last_sql: str | None = None
-
-        def raw_sql(self, sql):
-            self.last_sql = sql
-            return [
-                MockRow(("analytics", "events", "user@co.com", 2199023255552, 5)),
-                MockRow(("analytics", "users", "admin@co.com", 549755813888, 2)),
-            ]
-
-    from olly.adapters.bigquery import BigQueryAdapter
-
-    adapter = BigQueryAdapter.__new__(BigQueryAdapter)
-    mock_conn = MockConnection()
-    adapter._conn = mock_conn
+    adapter = make_bigquery_adapter(
+        raw_sql_rows=[
+            [("analytics", "events", "user@co.com", 2199023255552, 5),
+             ("analytics", "users", "admin@co.com", 549755813888, 2)],
+        ],
+    )
 
     records = adapter.fetch_query_costs(
         schemas=["analytics"],
@@ -254,15 +237,15 @@ def test_fetch_query_costs_adapter():
     assert records[0].total_bytes_billed == 2199023255552
     assert records[0].estimated_cost_usd == 2199023255552 / 1099511627776 * 6.25
     assert records[0].query_count == 5
-    assert mock_conn.last_sql is not None
-    assert "INFORMATION_SCHEMA.JOBS_BY_PROJECT" in mock_conn.last_sql
-    assert "'analytics'" in mock_conn.last_sql
+    assert len(adapter._conn.queries) == 1
+    assert "INFORMATION_SCHEMA.JOBS_BY_PROJECT" in adapter._conn.queries[0]
+    assert "'analytics'" in adapter._conn.queries[0]
 
 
 def test_fetch_query_costs_empty_schemas():
-    from olly.adapters.bigquery import BigQueryAdapter
+    from helpers import make_bigquery_adapter
 
-    adapter = BigQueryAdapter.__new__(BigQueryAdapter)
+    adapter = make_bigquery_adapter()
     records = adapter.fetch_query_costs(schemas=[], lookback_days=30)
     assert records == []
 
@@ -270,27 +253,9 @@ def test_fetch_query_costs_empty_schemas():
 def test_summarize_costs_top_limits():
     """Top tables limited to 10, top users limited to 5."""
     records = [
-        _makemake_cost_record(table=f"table_{i}", cost=float(i), user=f"user_{i}@co.com")
+        make_cost_record(table=f"table_{i}", cost=float(i), user=f"user_{i}@co.com")
         for i in range(15)
     ]
     summary = summarize_costs(records)
     assert len(summary["top_tables"]) == 10
     assert len(summary["top_users"]) == 5
-
-
-def _makemake_cost_record(
-    schema: str = "main",
-    table: str = "orders",
-    user: str = "user@example.com",
-    bytes_billed: int = 1099511627776,
-    cost: float = 6.25,
-    query_count: int = 10,
-) -> CostRecord:
-    return CostRecord(
-        schema_name=schema,
-        table_name=table,
-        user_email=user,
-        total_bytes_billed=bytes_billed,
-        estimated_cost_usd=cost,
-        query_count=query_count,
-    )

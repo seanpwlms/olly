@@ -10,8 +10,10 @@ export function useConnection() {
 
   const setConnection = (conn: string) => {
     void navigate({
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      search: { connection: conn || undefined } as any,
+      search: (prev: Record<string, unknown>) => ({
+        ...prev,
+        connection: conn || undefined,
+      }),
     });
   };
 

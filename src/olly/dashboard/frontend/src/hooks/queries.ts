@@ -1,13 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchApi, postApi } from "../api";
+import { fetchApi, postApi, putApi } from "../api";
 import type {
   ConnectionsResponse,
+  ContractsResponse,
   OverviewResponse,
   FindingsResponse,
+  IntegrityResponse,
   TablesResponse,
   TableDetailResponse,
   UsageResponse,
   DbtResponse,
+  DispositionHistoryResponse,
 } from "../types";
 
 export function useConnections() {
@@ -30,6 +33,7 @@ export function useFindings(params: {
   check_type?: string;
   severity?: string;
   schema?: string;
+  disposition?: string;
   q?: string;
   page?: number;
 }) {
@@ -41,6 +45,7 @@ export function useFindings(params: {
         check_type: params.check_type ?? "",
         severity: params.severity ?? "",
         schema: params.schema ?? "",
+        disposition: params.disposition ?? "",
         q: params.q ?? "",
         page: String(params.page ?? 1),
       }),
@@ -97,6 +102,22 @@ export function useDbt(connection: string) {
   });
 }
 
+export function useContracts(connection: string) {
+  return useQuery({
+    queryKey: ["contracts", connection],
+    queryFn: () =>
+      fetchApi<ContractsResponse>("/api/contracts", { connection }),
+  });
+}
+
+export function useIntegrity(connection: string) {
+  return useQuery({
+    queryKey: ["integrity", connection],
+    queryFn: () =>
+      fetchApi<IntegrityResponse>("/api/integrity", { connection }),
+  });
+}
+
 export function useRefresh() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -104,5 +125,64 @@ export function useRefresh() {
     onSuccess: () => {
       void queryClient.invalidateQueries();
     },
+  });
+}
+
+export function useBulkDisposition() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      findingIds,
+      disposition,
+      comment,
+    }: {
+      findingIds: number[];
+      disposition: string;
+      comment?: string;
+    }) =>
+      putApi<{ success: boolean; count: number }>(
+        "/api/findings/bulk-disposition",
+        { finding_ids: findingIds, disposition, comment: comment ?? "" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["findings"] });
+      void queryClient.invalidateQueries({ queryKey: ["table"] });
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+    },
+  });
+}
+
+export function useSetDisposition() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      findingId,
+      disposition,
+      comment,
+    }: {
+      findingId: number;
+      disposition: string;
+      comment?: string;
+    }) =>
+      putApi<{ success: boolean; disposition_id: number }>(
+        `/api/findings/${findingId}/disposition`,
+        { disposition, comment: comment ?? "" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["findings"] });
+      void queryClient.invalidateQueries({ queryKey: ["table"] });
+      void queryClient.invalidateQueries({ queryKey: ["overview"] });
+    },
+  });
+}
+
+export function useDispositionHistory(findingId: number | null) {
+  return useQuery({
+    queryKey: ["dispositionHistory", findingId],
+    queryFn: () =>
+      fetchApi<DispositionHistoryResponse>(
+        `/api/findings/${findingId}/dispositions`,
+      ),
+    enabled: findingId !== null,
   });
 }

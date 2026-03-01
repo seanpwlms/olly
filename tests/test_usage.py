@@ -6,21 +6,7 @@ from typing import Any, cast
 from olly.checks.usage import check_usage
 from olly.config import UsageConfig
 from olly.models import UsageRecord
-
-
-class FakeUsageAdapter:
-    """Adapter that returns pre-configured usage records."""
-
-    def __init__(self, records: list[UsageRecord]) -> None:
-        self._records = records
-
-    def fetch_table_usage(
-        self,
-        schemas: list[str],
-        lookback_days: int,
-        region: str = "us",
-    ) -> list[UsageRecord]:
-        return self._records
+from helpers import FakeUsageAdapter
 
 
 def _config(

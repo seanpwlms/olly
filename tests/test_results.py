@@ -167,6 +167,9 @@ def test_write_findings_json_structure(tmp_path):
         "description": "Row count anomaly",
         "details": {"z_score": 3.5},
         "connection_name": "dwh",
+        "id": None,
+        "disposition": "not_started",
+        "created_at": "",
     }
 
 

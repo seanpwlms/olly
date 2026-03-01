@@ -111,14 +111,6 @@ def serve(*, host: str = "127.0.0.1", port: int = 8000) -> None:
 
 
 @app.command
-def serve_prefab(*, host: str = "127.0.0.1", port: int = 8000) -> None:
-    """Start the Olly Prefab dashboard (experimental)."""
-    from olly.cli.serve import run_serve_prefab
-
-    run_serve_prefab(host=host, port=port)
-
-
-@app.command
 def debug(*, connection: str | None = None) -> None:
     """Test connectivity to the configured warehouse.
 
