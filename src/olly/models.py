@@ -147,3 +147,16 @@ class DbtFinding:
     execution_time: float
     description: str
     details: dict = field(default_factory=dict)
+    dbt_run_id: int | None = None
+
+
+@dataclass
+class DbtRunRecord:
+    """Summary of a dbt run invocation."""
+
+    invocation_id: str
+    elapsed_time: float
+    total_nodes: int
+    error_count: int
+    warning_count: int
+    pass_count: int

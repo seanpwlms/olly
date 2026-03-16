@@ -6,8 +6,18 @@ import sys
 from dataclasses import asdict
 
 from rich.console import Console
+from rich.progress import (
+    BarColumn,
+    MofNCompleteColumn,
+    Progress,
+    SpinnerColumn,
+    TaskID,
+    TextColumn,
+    TimeElapsedColumn,
+)
 from rich.table import Table
 
+from olly.adapter import connect_typed
 from olly.checker import run_checks
 from olly.config import load_config
 from olly.config_ops import (
@@ -26,8 +36,44 @@ logger = logging.getLogger(__name__)
 console = Console()
 
 
+def _build_check_table(
+    findings: list[Finding], title: str,
+) -> Table:
+    """Build a Rich table for findings that share a single check type."""
+    table = Table(title=title, show_lines=False, pad_edge=True, padding=(0, 1))
+    table.add_column("Severity", width=8)
+    table.add_column("Table", style="blue")
+    table.add_column("Description")
+
+    for f in findings:
+        severity_style = "red bold" if f.severity == "error" else "yellow"
+        table.add_row(
+            f"[{severity_style}]{f.severity}[/{severity_style}]",
+            f"{f.schema_name}.{f.table_name}",
+            f.description,
+        )
+    return table
+
+
+def _print_findings_group(
+    findings: list[Finding], prefix: str = "",
+) -> None:
+    """Print one table per check type, with an optional title prefix."""
+    by_check: dict[str, list[Finding]] = {}
+    for f in sorted(findings, key=lambda f: f.check_type):
+        by_check.setdefault(f.check_type, []).append(f)
+
+    for check_type, check_findings in by_check.items():
+        title = f"{prefix}{check_type}" if prefix else check_type
+        console.print(_build_check_table(check_findings, title=title))
+        console.print()
+
+
 def print_findings_table(findings: list[Finding]) -> None:
-    """Render findings as a Rich table to the console.
+    """Render findings as Rich tables to the console.
+
+    Findings are split by connection (if multiple) and check type so that
+    neither occupies a column — each combination gets its own table.
 
     Args:
         findings: List of findings to display. Prints nothing when empty.
@@ -37,28 +83,16 @@ def print_findings_table(findings: list[Finding]) -> None:
 
     show_connection = any(f.connection_name for f in findings)
 
-    table = Table(title="Findings", show_lines=True)
-    if show_connection:
-        table.add_column("Connection", style="magenta", width=12)
-    table.add_column("Check", style="cyan", width=10)
-    table.add_column("Severity", width=8)
-    table.add_column("Table", style="blue")
-    table.add_column("Description")
+    if not show_connection:
+        _print_findings_group(findings)
+        return
 
-    for f in findings:
-        severity_style = "red bold" if f.severity == "error" else "yellow"
-        row = []
-        if show_connection:
-            row.append(f.connection_name)
-        row.extend([
-            f.check_type,
-            f"[{severity_style}]{f.severity}[/{severity_style}]",
-            f"{f.schema_name}.{f.table_name}",
-            f.description,
-        ])
-        table.add_row(*row)
+    by_connection: dict[str, list[Finding]] = {}
+    for f in sorted(findings, key=lambda f: f.connection_name):
+        by_connection.setdefault(f.connection_name, []).append(f)
 
-    console.print(table)
+    for conn_name, conn_findings in by_connection.items():
+        _print_findings_group(conn_findings, prefix=f"{conn_name} — ")
 
 
 def print_dbt_findings_table(dbt_findings: list[DbtFinding]) -> None:
@@ -147,7 +181,12 @@ def run_check(
 
     connections = resolve_connections(config, connection_name)
     has_multiple_snapshots = False
-    with open_state(config) as state_db:
+    # Connect to the first adapter so open_state can route to warehouse
+    # when state_schema is configured.
+    first_adapter = None
+    if config.settings.state_schema and connections:
+        first_adapter = connect_typed(connections[0][1].connection)
+    with open_state(config, first_adapter) as state_db:
         for name, nc in connections:
             if state_db.has_multiple_snapshots(connection_name=name):
                 has_multiple_snapshots = True
@@ -159,9 +198,49 @@ def run_check(
         )
         raise SystemExit(1)
 
-    findings, dbt_findings, cost_records = run_checks(
-        config, connection_name=connection_name
-    )
+    # Count total check steps for the progress bar
+    num_connections = len(connections)
+    # Per connection: connect, schema, volume, freshness
+    per_conn = 4
+    if config.usage.enabled:
+        per_conn += 1
+    if config.usage.cost_enabled:
+        per_conn += 1
+    if config.contracts.module:
+        per_conn += 1
+    total_steps = num_connections * per_conn
+    # Global: dbt + saving (always), integrity (if configured)
+    total_steps += 2
+    if config.integrity.module:
+        total_steps += 1
+
+    show_connection = num_connections > 1
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=20),
+        MofNCompleteColumn(),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task(
+            "Running checks...", total=total_steps, visible=False,
+        )
+
+        def _on_progress(
+            conn: str,
+            check: str,
+            _p: Progress = progress,
+            _t: TaskID = task,
+        ) -> None:
+            label = f"{conn} — {check}" if conn and show_connection else check
+            _p.update(_t, description=label, advance=1, visible=True)
+
+        findings, dbt_findings, cost_records = run_checks(
+            config, connection_name=connection_name, on_progress=_on_progress,
+        )
     should_write = (
         config.settings.write_results if write_results is None else write_results
     )

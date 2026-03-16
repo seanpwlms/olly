@@ -6,13 +6,13 @@ readme = "README.md"
 authors = [
     { name = "seanpwlms", email = "66645429+seanpwlms@users.noreply.github.com" }
 ]
+keywords = ["data-quality", "data-warehouse", "monitoring", "dbt", "bigquery", "snowflake", "duckdb", "postgres"]
 requires-python = ">=3.12"
 dependencies = [
     "ibis-framework",
     "cyclopts",
     "tomli-w",
-    "rich",
-    "prefab-ui>=0.2.0",
+    "rich"
 ]
 
 [project.optional-dependencies]

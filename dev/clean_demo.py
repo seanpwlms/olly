@@ -18,7 +18,7 @@ from olly.state import get_olly_dir
 DEV_DIR = Path(__file__).resolve().parent
 
 CLEANUP = [
-    get_olly_dir(DEV_DIR),
+    get_olly_dir(),
     DEV_DIR / "warehouse.duckdb",
     DEV_DIR / "warehouse.duckdb.wal",
     DEV_DIR / "source.duckdb",

@@ -8,21 +8,13 @@ import { GroupedFindingsTable } from "../components/GroupedFindingsTable";
 import { Pagination } from "../components/Pagination";
 import { ErrorState } from "../components/ErrorState";
 import { EmptyState } from "../components/EmptyState";
-import { DbtContent } from "../components/DbtContent";
 import { SkeletonStatCards, SkeletonTable } from "../components/Skeleton";
 import { findingsRoute, type FindingsSearch } from "../routeTree";
-
-const tabs = [
-  { key: "quality", label: "Quality" },
-  { key: "dbt", label: "dbt" },
-] as const;
 
 export function FindingsPage() {
   const { connection } = useConnection();
   const search = useSearch({ from: findingsRoute.id });
   const navigate = useNavigate({ from: findingsRoute.id });
-
-  const activeTab = search.tab === "dbt" ? "dbt" : "quality";
 
   const setFilter = (updates: Partial<FindingsSearch>) => {
     void navigate({
@@ -34,43 +26,14 @@ export function FindingsPage() {
     });
   };
 
-  const switchTab = (tab: string) => {
-    void navigate({
-      search: tab === "dbt" ? { tab: "dbt" } : {},
-      replace: true,
-    });
-  };
-
   return (
     <>
-      <div className="flex items-center gap-6 mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Findings</h1>
-        <div className="flex gap-1">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              onClick={() => switchTab(tab.key)}
-              className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
-                activeTab === tab.key
-                  ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-800"
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {activeTab === "dbt" ? (
-        <DbtContent />
-      ) : (
-        <QualityContent
-          connection={connection}
-          search={search}
-          setFilter={setFilter}
-        />
-      )}
+      <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-6">Findings</h1>
+      <QualityContent
+        connection={connection}
+        search={search}
+        setFilter={setFilter}
+      />
     </>
   );
 }

@@ -1,12 +1,9 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 
 from olly.config import load_config
 from olly.models import ColumnInfo, DbtFinding, Finding, TableInfo
-from olly.results import get_default_findings_path
 from olly.state import BaseStateStore
 
 
@@ -89,16 +86,88 @@ class DbtStats:
     warning_count: int
     pass_count: int
     total_count: int
+    total_execution_time: float = 0.0
+    total_failures: int = 0
 
 
 def get_dbt_stats(dbt_findings: list[DbtFinding]) -> DbtStats:
     """Compute summary stats for dbt findings."""
+    total_failures = 0
+    for f in dbt_findings:
+        failures = f.details.get("failures")
+        if isinstance(failures, int):
+            total_failures += failures
     return DbtStats(
         error_count=sum(1 for f in dbt_findings if f.severity == "error"),
         warning_count=sum(1 for f in dbt_findings if f.severity == "warning"),
         pass_count=sum(1 for f in dbt_findings if f.severity == "pass"),
         total_count=len(dbt_findings),
+        total_execution_time=sum(f.execution_time for f in dbt_findings),
+        total_failures=total_failures,
     )
+
+
+@dataclass
+class DbtExecutionLeaderboardEntry:
+    unique_id: str
+    resource_type: str
+    execution_time: float
+    status: str
+    severity: str
+
+
+def get_dbt_execution_leaderboard(
+    dbt_findings: list[DbtFinding], limit: int = 20,
+) -> list[DbtExecutionLeaderboardEntry]:
+    """Return the slowest dbt nodes sorted by execution time descending."""
+    sorted_findings = sorted(dbt_findings, key=lambda f: f.execution_time, reverse=True)
+    return [
+        DbtExecutionLeaderboardEntry(
+            unique_id=f.unique_id,
+            resource_type=f.resource_type,
+            execution_time=f.execution_time,
+            status=f.status,
+            severity=f.severity,
+        )
+        for f in sorted_findings[:limit]
+    ]
+
+
+@dataclass
+class DbtRunHistoryPoint:
+    created_at: str
+    elapsed_time: float
+    total_nodes: int
+    error_count: int
+    warning_count: int
+    pass_count: int
+
+
+def get_dbt_run_history(
+    state_db: BaseStateStore, limit: int = 30,
+) -> list[DbtRunHistoryPoint]:
+    """Get dbt run history for charting, oldest first."""
+    rows = state_db.get_dbt_run_history_with_timestamps(limit)
+    # rows come newest-first, reverse for chronological chart display
+    return [
+        DbtRunHistoryPoint(
+            created_at=ts,
+            elapsed_time=run.elapsed_time,
+            total_nodes=run.total_nodes,
+            error_count=run.error_count,
+            warning_count=run.warning_count,
+            pass_count=run.pass_count,
+        )
+        for ts, run in reversed(rows)
+    ]
+
+
+def get_dbt_node_timeseries(
+    state_db: BaseStateStore, unique_id: str, limit: int = 30,
+) -> list[dict]:
+    """Get execution time history for a specific dbt node."""
+    rows = state_db.get_dbt_node_timing_timeseries(unique_id, limit)
+    return [{"timestamp": ts, "execution_time": t} for ts, t in rows]
 
 
 @dataclass
@@ -126,14 +195,40 @@ def get_usage_stats(
     )
 
 
-def load_cost_summary(findings_path: Path | None = None) -> dict | None:
-    """Load cost_summary from the findings JSON, if present."""
-    path = findings_path or get_default_findings_path()
-    if not path.exists():
+def build_cost_summary(
+    state_db: BaseStateStore, connection_name: str = "",
+) -> dict | None:
+    """Build cost summary from cost records in the state database."""
+    records = state_db.get_latest_cost(connection_name)
+    if not records:
         return None
-    with open(path, encoding="utf-8") as f:
-        data = json.load(f)
-    return data.get("cost_summary")
+
+    total_cost = sum(r.estimated_cost_usd for r in records)
+
+    # Aggregate by table
+    table_agg: dict[tuple[str, str], float] = {}
+    for r in records:
+        key = (r.schema_name, r.table_name)
+        table_agg[key] = table_agg.get(key, 0.0) + r.estimated_cost_usd
+    top_tables = sorted(
+        [{"schema": s, "table": t, "cost_usd": c} for (s, t), c in table_agg.items()],
+        key=lambda x: -x["cost_usd"],
+    )[:10]
+
+    # Aggregate by user
+    user_agg: dict[str, float] = {}
+    for r in records:
+        user_agg[r.user_email] = user_agg.get(r.user_email, 0.0) + r.estimated_cost_usd
+    top_users = sorted(
+        [{"user": u, "cost_usd": c} for u, c in user_agg.items()],
+        key=lambda x: -x["cost_usd"],
+    )[:10]
+
+    return {
+        "total_cost_usd": total_cost,
+        "top_tables": top_tables,
+        "top_users": top_users,
+    }
 
 
 def get_stats(

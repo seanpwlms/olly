@@ -167,7 +167,7 @@ def setup() -> OllyConfig:
         CONFIG_PATH.unlink()
 
     # Clean state directory for dev environment
-    state_dir = get_olly_dir(DEV_DIR)
+    state_dir = get_olly_dir()
     if state_dir.exists():
         shutil.rmtree(state_dir)
 

@@ -943,7 +943,6 @@ source = { editable = "." }
 dependencies = [
     { name = "cyclopts" },
     { name = "ibis-framework" },
-    { name = "prefab-ui" },
     { name = "rich" },
     { name = "tomli-w" },
 ]
@@ -985,7 +984,6 @@ requires-dist = [
     { name = "ibis-framework", extras = ["duckdb"], marker = "extra == 'duckdb'" },
     { name = "ibis-framework", extras = ["postgres"], marker = "extra == 'postgres'" },
     { name = "ibis-framework", extras = ["snowflake"], marker = "extra == 'snowflake'" },
-    { name = "prefab-ui", specifier = ">=0.2.0" },
     { name = "rich" },
     { name = "tomli-w" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'dashboard'", specifier = ">=0.32.0" },
@@ -1111,20 +1109,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
-]
-
-[[package]]
-name = "prefab-ui"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cyclopts" },
-    { name = "pydantic" },
-    { name = "rich" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9d/94/2959ce55101e69653ed08f0f470899faf78a38cbb68d3172c7513d33f2f0/prefab_ui-0.2.0.tar.gz", hash = "sha256:aa95901a0dffde80b1224b6aa73ed5f8d9db4ef93c1472fdbf402267cfc961f0", size = 3736397, upload-time = "2026-02-19T20:00:22.741Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/87/6c/17e03c95c5a5ea611d4f2c044d8495a2beec9e916ad0073d613d655679e4/prefab_ui-0.2.0-py3-none-any.whl", hash = "sha256:f82f4c36ed84ccede819b641e0459989ef35da1aa7493ec26e0a4c2b13aafd1d", size = 771916, upload-time = "2026-02-19T20:00:24.753Z" },
 ]
 
 [[package]]

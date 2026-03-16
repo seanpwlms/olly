@@ -29,7 +29,7 @@ def test_unused_table_is_error():
     findings = check_usage(cast(Any, adapter), ["main"], _config())
     assert len(findings) == 1
     assert findings[0].check_type == "usage"
-    assert findings[0].severity == "error"
+    assert findings[0].severity == "warning"
     assert findings[0].table_name == "dead_table"
     assert findings[0].details["last_queried_at"] is None
 
@@ -45,14 +45,14 @@ def test_stale_table_warning():
     assert findings[0].details["days_unused"] > 40
 
 
-def test_very_stale_table_error():
-    """Table beyond 2x threshold gets error."""
+def test_very_stale_table_uses_configured_severity():
+    """Table beyond 2x threshold uses configured severity."""
     now = datetime.now(timezone.utc)
     records = [UsageRecord("main", "ancient", last_queried_at=now - timedelta(days=70))]
     adapter = FakeUsageAdapter(records)
     findings = check_usage(cast(Any, adapter), ["main"], _config())
     assert len(findings) == 1
-    assert findings[0].severity == "error"
+    assert findings[0].severity == "warning"
 
 
 def test_recently_used_no_finding():
@@ -76,8 +76,8 @@ def test_mixed_tables():
     assert len(findings) == 3
     by_table = {f.table_name: f.severity for f in findings}
     assert by_table["stale_warn"] == "warning"
-    assert by_table["stale_error"] == "error"
-    assert by_table["unused"] == "error"
+    assert by_table["stale_error"] == "warning"
+    assert by_table["unused"] == "warning"
 
 
 def test_naive_timestamp_treated_as_utc():
@@ -95,3 +95,34 @@ def test_empty_records():
     adapter = FakeUsageAdapter([])
     findings = check_usage(cast(Any, adapter), ["main"], _config())
     assert len(findings) == 0
+
+
+def test_all_tables_flags_missing_from_query_history():
+    """Tables in all_tables but absent from usage records are flagged as unused."""
+    now = datetime.now(timezone.utc)
+    records = [UsageRecord("main", "active", now - timedelta(days=1))]
+    adapter = FakeUsageAdapter(records)
+    all_tables = [("main", "active"), ("main", "orphan"), ("other", "ghost")]
+    findings = check_usage(cast(Any, adapter), ["main"], _config(), all_tables=all_tables)
+    assert len(findings) == 2
+    missing = {(f.schema_name, f.table_name) for f in findings}
+    assert ("main", "orphan") in missing
+    assert ("other", "ghost") in missing
+    for f in findings:
+        assert f.severity == "warning"
+        assert f.details["last_queried_at"] is None
+
+
+def test_severity_config_override():
+    """Setting severity='error' in config propagates to all findings."""
+    now = datetime.now(timezone.utc)
+    records = [
+        UsageRecord("main", "stale", now - timedelta(days=45)),
+        UsageRecord("main", "unused", None),
+    ]
+    adapter = FakeUsageAdapter(records)
+    cfg = UsageConfig(enabled=True, severity="error")
+    findings = check_usage(cast(Any, adapter), ["main"], cfg)
+    assert len(findings) == 2
+    for f in findings:
+        assert f.severity == "error"

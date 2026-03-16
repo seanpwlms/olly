@@ -30,9 +30,11 @@ function fillDayGaps(points: FindingsTrendPoint[]): (FindingsTrendPoint & { labe
   }
   const sortedDays = [...byDay.keys()].sort();
   const result: (FindingsTrendPoint & { label: string })[] = [];
-  const start = new Date(sortedDays[0] + "T00:00:00");
-  const end = new Date(sortedDays[sortedDays.length - 1] + "T00:00:00");
-  let prev = byDay.get(sortedDays[0])!;
+  const firstDay = sortedDays[0]!;
+  const lastDay = sortedDays[sortedDays.length - 1]!;
+  const start = new Date(firstDay + "T00:00:00");
+  const end = new Date(lastDay + "T00:00:00");
+  let prev = byDay.get(firstDay)!;
   for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
     const key = d.toISOString().slice(0, 10);
     const point = byDay.get(key) ?? { timestamp: key, errors: prev.errors, warnings: prev.warnings };

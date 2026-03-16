@@ -919,7 +919,7 @@ def seed_rich_dashboard_data(config: OllyConfig) -> None:
     _write_expanded_dbt_results()
 
     # Open state DB
-    state_dir = get_olly_dir(DEV_DIR)
+    state_dir = get_olly_dir()
     state_db = StateDB(state_dir / "state.db")
 
     now = datetime.now(timezone.utc)

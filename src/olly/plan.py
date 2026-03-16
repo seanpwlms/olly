@@ -32,8 +32,8 @@ class SchemaMatch:
 
 
 @dataclass
-class ConnectionExplain:
-    """Explain result for a single connection."""
+class ConnectionPlan:
+    """Plan result for a single connection."""
 
     name: str
     nc: NamedConnection
@@ -43,40 +43,40 @@ class ConnectionExplain:
 
 
 @dataclass
-class ExplainResult:
-    """Full output of the config-explain analysis.
+class PlanResult:
+    """Full output of the plan analysis.
 
     Attributes:
         config: The parsed Olly configuration.
-        connection_explains: Per-connection explain results.
+        connection_plans: Per-connection plan results.
         warnings: Config validation warnings.
     """
 
     config: OllyConfig
-    connection_explains: list[ConnectionExplain]
+    connection_plans: list[ConnectionPlan]
     warnings: list[str]
 
 
-def explain_config(
+def resolve_plan(
     config: OllyConfig,
     backends: dict[str, Adapter],
     connection_name: str | None = None,
-) -> ExplainResult:
+) -> PlanResult:
     """Analyze the current config against live backends.
 
     Args:
         config: Parsed ``OllyConfig``.
         backends: Dict mapping connection name to adapter instance. Connections
             missing from the dict are shown with config-only output.
-        connection_name: Optional connection name to explain.
+        connection_name: Optional connection name to resolve.
 
     Returns:
-        An ``ExplainResult`` with matched schemas, tables, settings, and
+        A ``PlanResult`` with matched schemas, tables, settings, and
         any config warnings.
     """
-    connection_explains: list[ConnectionExplain] = []
+    connection_plans: list[ConnectionPlan] = []
     connections = resolve_connections(config, connection_name)
-    logger.info("Explaining %d connection(s)", len(connections))
+    logger.info("Resolving plan for %d connection(s)", len(connections))
 
     for name, nc in connections:
         backend = backends.get(name)
@@ -122,8 +122,8 @@ def explain_config(
             for t in tables
         }
 
-        connection_explains.append(
-            ConnectionExplain(
+        connection_plans.append(
+            ConnectionPlan(
                 name=name,
                 nc=nc,
                 schema_matches=schema_matches,
@@ -134,33 +134,33 @@ def explain_config(
 
     warnings = validate_config(config)
 
-    return ExplainResult(
+    return PlanResult(
         config=config,
-        connection_explains=connection_explains,
+        connection_plans=connection_plans,
         warnings=warnings,
     )
 
 
-def format_explain(result: ExplainResult) -> str:
-    """Format an ``ExplainResult`` as a human-readable multiline string.
+def format_plan(result: PlanResult) -> str:
+    """Format a ``PlanResult`` as a human-readable multiline string.
 
     Args:
-        result: The explain result to format.
+        result: The plan result to format.
 
     Returns:
         Plain-text report showing selection rules, matched schemas/tables,
         resolved overrides, and any warnings.
     """
     lines: list[str] = []
-    lines.append("Config explain (olly.toml)")
+    lines.append("Plan (olly.toml)")
     lines.append("")
 
-    for ce in result.connection_explains:
-        if len(result.connection_explains) > 1:
-            lines.append(f"Connection: {ce.name}")
+    for cp in result.connection_plans:
+        if len(result.connection_plans) > 1:
+            lines.append(f"Connection: {cp.name}")
             lines.append("")
 
-        selection = ce.nc.selection
+        selection = cp.nc.selection
         lines.append("Selection")
         lines.append(f"  include_schemas: {selection.include_schemas}")
         lines.append(f"  exclude_schemas: {selection.exclude_schemas}")
@@ -169,7 +169,7 @@ def format_explain(result: ExplainResult) -> str:
 
         lines.append("")
         lines.append("Matched schemas")
-        for match in ce.schema_matches:
+        for match in cp.schema_matches:
             if match.included:
                 lines.append(f"  + {match.name}")
             elif match.reason:
@@ -177,17 +177,17 @@ def format_explain(result: ExplainResult) -> str:
 
         lines.append("")
         lines.append("Matched tables")
-        if ce.table_matches:
-            for table in ce.table_matches:
+        if cp.table_matches:
+            for table in cp.table_matches:
                 lines.append(f"  + {table}")
         else:
             lines.append("  <none>")
 
         lines.append("")
         lines.append("Overrides (precedence: global -> schema -> pattern -> object)")
-        if ce.table_settings:
-            for table in sorted(ce.table_settings.keys()):
-                settings = ce.table_settings[table]
+        if cp.table_settings:
+            for table in sorted(cp.table_settings.keys()):
+                settings = cp.table_settings[table]
                 lines.append(f"  {table}")
                 freshness_column = settings.freshness_column or "<none>"
                 lines.append(

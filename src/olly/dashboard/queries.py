@@ -32,17 +32,29 @@ def get_snapshot_history(
 def get_findings_trend(
     state_db: BaseStateStore, limit: int = 20,
 ) -> list[tuple[str, int, int]]:
-    """Return (day, errors, warnings) per day, using the latest run each day."""
-    t = state_db._table("findings")  # noqa: SLF001
+    """Return (day, errors, warnings) per day, including days with 0 findings.
+
+    Uses snapshot dates as the base so days without findings still appear.
+    When multiple check runs occur on the same day, counts findings from the
+    latest run only.
+    """
+    s = state_db._table("snapshots")  # noqa: SLF001
+    f = state_db._table("findings")  # noqa: SLF001
     return state_db._query(  # noqa: SLF001
-        "SELECT day, errors, warnings FROM ("  # noqa: S608
-        "SELECT SUBSTR(created_at, 1, 10) AS day, "
-        "SUM(CASE WHEN severity='error' THEN 1 ELSE 0 END) AS errors, "
-        "SUM(CASE WHEN severity='warning' THEN 1 ELSE 0 END) AS warnings, "
-        "ROW_NUMBER() OVER (PARTITION BY SUBSTR(created_at, 1, 10) "
-        "ORDER BY created_at DESC) AS rn "
-        f"FROM {t} GROUP BY created_at"
-        ") WHERE rn = 1 ORDER BY day DESC LIMIT :limit",
+        "SELECT days.day, "  # noqa: S608
+        "COALESCE(SUM(CASE WHEN severity='error' THEN 1 ELSE 0 END), 0) AS errors, "
+        "COALESCE(SUM(CASE WHEN severity='warning' THEN 1 ELSE 0 END), 0) AS warnings "
+        "FROM ("
+        f"SELECT DISTINCT SUBSTR(created_at, 1, 10) AS day FROM {s} "
+        "UNION "
+        f"SELECT DISTINCT SUBSTR(created_at, 1, 10) FROM {f}"
+        ") days "
+        f"LEFT JOIN {f} ON SUBSTR({f}.created_at, 1, 10) = days.day "
+        f"AND {f}.created_at = ("
+        f"SELECT MAX(f2.created_at) FROM {f} f2 "
+        f"WHERE SUBSTR(f2.created_at, 1, 10) = days.day"
+        ") "
+        "GROUP BY days.day ORDER BY days.day DESC LIMIT :limit",
         {"limit": limit},
     )
 

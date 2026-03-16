@@ -75,7 +75,7 @@ export function IndexPage() {
             value={dbt_stats.error_count + dbt_stats.warning_count}
             label="dbt Issues"
             variant={dbt_stats.error_count > 0 ? "error" : "warning"}
-            link={{ to: "/findings", search: { tab: "dbt" } }}
+            link={{ to: "/dbt" }}
           />
         )}
       </StatsRow>

@@ -3,7 +3,6 @@ import pytest
 from olly.config import (
     ConfigError,
     ConnectionConfig,
-    CostConfig,
     DbtConfig,
     IntegrityConfig,
     NamedConnection,
@@ -212,12 +211,12 @@ def test_write_config_with_usage(tmp_path):
 
 
 def test_write_config_with_cost(tmp_path):
-    """write_config serializes cost section correctly."""
+    """write_config serializes cost fields in usage section."""
     config = _make_config(
         connection=ConnectionConfig(type="duckdb", path="x.duckdb"),
-        cost=CostConfig(
-            enabled=True,
-            lookback_days=14,
+        usage=UsageConfig(
+            cost_enabled=True,
+            cost_lookback_days=14,
             bigquery_region="eu",
             price_per_tb_usd=5.0,
             spike_threshold=2.5,
@@ -226,14 +225,14 @@ def test_write_config_with_cost(tmp_path):
     path = tmp_path / "olly.toml"
     write_config(config, path)
     loaded = load_config(path)
-    assert loaded.cost.enabled is True
-    assert loaded.cost.lookback_days == 14
-    assert loaded.cost.price_per_tb_usd == 5.0
-    assert loaded.cost.spike_threshold == 2.5
+    assert loaded.usage.cost_enabled is True
+    assert loaded.usage.cost_lookback_days == 14
+    assert loaded.usage.price_per_tb_usd == 5.0
+    assert loaded.usage.spike_threshold == 2.5
 
 
-def test_load_cost_config(tmp_path):
-    """Cost config section should parse correctly."""
+def test_load_legacy_cost_config(tmp_path):
+    """Legacy [cost] section should be merged into usage config."""
     path = tmp_path / "olly.toml"
     path.write_text(
         '[connections.primary]\ntype = "duckdb"\npath = "x.duckdb"\n'
@@ -245,23 +244,23 @@ def test_load_cost_config(tmp_path):
         "spike_threshold = 2.5\n"
     )
     config = load_config(path)
-    assert config.cost.enabled is True
-    assert config.cost.lookback_days == 14
-    assert config.cost.bigquery_region == "eu"
-    assert config.cost.price_per_tb_usd == 5.0
-    assert config.cost.spike_threshold == 2.5
+    assert config.usage.cost_enabled is True
+    assert config.usage.cost_lookback_days == 14
+    assert config.usage.bigquery_region == "eu"
+    assert config.usage.price_per_tb_usd == 5.0
+    assert config.usage.spike_threshold == 2.5
 
 
 def test_cost_config_defaults(tmp_path):
-    """Cost config should have sensible defaults when section is absent."""
+    """Cost fields should have sensible defaults when no cost config present."""
     path = tmp_path / "olly.toml"
     path.write_text('[connections.primary]\ntype = "duckdb"\npath = "x.duckdb"\n')
     config = load_config(path)
-    assert config.cost.enabled is False
-    assert config.cost.lookback_days == 30
-    assert config.cost.bigquery_region == "us"
-    assert config.cost.price_per_tb_usd == 6.25
-    assert config.cost.spike_threshold == 3.0
+    assert config.usage.cost_enabled is False
+    assert config.usage.cost_lookback_days == 30
+    assert config.usage.bigquery_region == "us"
+    assert config.usage.price_per_tb_usd == 6.25
+    assert config.usage.spike_threshold == 3.0
 
 
 # --- Connection extras tests ---

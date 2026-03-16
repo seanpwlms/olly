@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import ibis
 
 from olly.models import ColumnInfo, CostRecord, TableInfo, UsageRecord, VolumeRecord
+
+if TYPE_CHECKING:
+    from olly.adapter import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +130,19 @@ class BaseAdapter:
 
     # --- Shared query methods using Ibis ---
 
-    def fetch_schema_info(self, schemas: list[str]) -> list[TableInfo]:
+    def list_tables(self, schemas: list[str]) -> list[tuple[str, str]]:
+        """Return ``(schema_name, table_name)`` pairs across the given schemas."""
+        result: list[tuple[str, str]] = []
+        for schema_name in schemas:
+            for table_name in self._list_ibis_tables(schema_name):
+                result.append((schema_name, table_name))
+        return result
+
+    def fetch_schema_info(
+        self,
+        schemas: list[str],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[TableInfo]:
         """Introspect tables and views across the given schemas."""
         logger.debug("Fetching schema info for schemas: %s", schemas)
         tables: list[TableInfo] = []
@@ -152,6 +167,8 @@ class BaseAdapter:
                         columns=columns,
                     )
                 )
+                if on_progress:
+                    on_progress(schema_name, table_name)
         return tables
 
     def fetch_table_schema(self, schema_name: str, table_name: str) -> ibis.Schema:
@@ -159,7 +176,11 @@ class BaseAdapter:
         t = self._get_ibis_table(schema_name, table_name)
         return t.schema()
 
-    def fetch_row_counts(self, table_infos: list[TableInfo]) -> list[VolumeRecord]:
+    def fetch_row_counts(
+        self,
+        table_infos: list[TableInfo],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[VolumeRecord]:
         """Fetch row counts for the given tables, skipping views."""
         logger.debug("Fetching row counts for %d tables", len(table_infos))
         records = []
@@ -176,6 +197,8 @@ class BaseAdapter:
                         row_count=int(count),
                     )
                 )
+                if on_progress:
+                    on_progress(ti.schema_name, ti.table_name)
             except Exception as exc:
                 raise RuntimeError(
                     f"Failed to fetch row count for {ti.schema_name}.{ti.table_name}"

@@ -10,6 +10,9 @@ from pydantic import BaseModel
 from olly.dashboard.data import (
     filter_findings,
     get_cost_daily_timeseries,
+    get_dbt_execution_leaderboard,
+    get_dbt_node_timeseries,
+    get_dbt_run_history,
     get_dbt_stats,
     get_findings_by_connection,
     get_findings_by_table,
@@ -27,7 +30,7 @@ from olly.dashboard.data import (
     get_volume_stats,
     get_volume_timeseries,
     hydrate_dispositions,
-    load_cost_summary,
+    build_cost_summary,
     load_dbt_findings_from_db,
     load_findings_from_db,
 )
@@ -37,8 +40,12 @@ from olly.dashboard.schemas import (
     ContractsResponse,
     ContractStatusModel,
     DashboardStatsModel,
+    DbtExecutionLeaderboardModel,
     DbtFindingModel,
+    DbtNodeTimingModel,
+    DbtNodeTimingsResponse,
     DbtResponse,
+    DbtRunHistoryPointModel,
     DbtStatsModel,
     DispositionCounts,
     DispositionHistoryResponse,
@@ -272,7 +279,7 @@ def _filter_sort_paginate(
     table_rows = sorted(
         table_rows,
         key=lambda r: (
-            r[sort_key] is None,
+            r[sort_key] is None if not reverse else r[sort_key] is not None,
             r[sort_key] or 0
             if sort_key in ("columns", "row_count")
             else (r[sort_key] or ""),
@@ -404,8 +411,8 @@ def api_usage(connection: str = Query("")):
             state_db, days=30, connection_name=conn_name
         )
         least_used = get_least_used_tables(state_db, conn_name)
+        cost_summary = build_cost_summary(state_db, conn_name)
 
-    cost_summary = load_cost_summary()
     usage_findings = get_usage_findings(findings)
     stats = get_usage_stats(usage_findings, cost_summary)
 
@@ -424,6 +431,8 @@ def api_dbt(connection: str = Query("")):
     conn_name = _get_current_connection(connection, config)
     with _state_db(conn_name, config) as (state_db, _conn):
         dbt_findings = load_dbt_findings_from_db(state_db)
+        leaderboard = get_dbt_execution_leaderboard(dbt_findings)
+        run_history = get_dbt_run_history(state_db)
 
     dbt_stats = get_dbt_stats(dbt_findings)
     resource_types = sorted({f.resource_type for f in dbt_findings})
@@ -434,6 +443,36 @@ def api_dbt(connection: str = Query("")):
         dbt_findings=[DbtFindingModel.model_validate(f) for f in dbt_findings],
         resource_types=resource_types,
         severities=severities,
+        execution_leaderboard=[
+            DbtExecutionLeaderboardModel.model_validate(e) for e in leaderboard
+        ],
+        run_history=[
+            DbtRunHistoryPointModel.model_validate(p) for p in run_history
+        ],
+    )
+
+
+@router.get("/dbt/node/{unique_id:path}/previous-sql")
+def api_dbt_previous_sql(
+    unique_id: str,
+    dbt_run_id: int | None = Query(None),
+    connection: str = Query(""),
+):
+    with _state_db(connection) as (state_db, _conn):
+        prev_sql = state_db.get_previous_compiled_code(unique_id, dbt_run_id)
+    return {"unique_id": unique_id, "previous_sql": prev_sql}
+
+
+@router.get("/dbt/node/{unique_id:path}/timings", response_model=DbtNodeTimingsResponse)
+def api_dbt_node_timings(unique_id: str, connection: str = Query("")):
+    config = load_config()
+    conn_name = _get_current_connection(connection, config)
+    with _state_db(conn_name, config) as (state_db, _conn):
+        timings = get_dbt_node_timeseries(state_db, unique_id)
+
+    return DbtNodeTimingsResponse(
+        unique_id=unique_id,
+        timings=[DbtNodeTimingModel(**t) for t in timings],
     )
 
 

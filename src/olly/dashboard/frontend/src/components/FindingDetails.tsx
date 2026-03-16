@@ -101,7 +101,7 @@ export function FindingDetails({ finding }: FindingDetailsProps) {
   const d = finding.details;
   if (!d || Object.keys(d).length === 0) return null;
 
-  const renderers: Record<string, ({ d }: { d: Record<string, unknown> }) => JSX.Element | null> = {
+  const renderers: Record<string, ({ d }: { d: Record<string, unknown> }) => React.JSX.Element | null> = {
     schema: SchemaDetails,
     volume: VolumeDetails,
     freshness: FreshnessDetails,

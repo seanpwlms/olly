@@ -17,6 +17,15 @@ from olly.config import (
 from olly.state import StateDB
 
 
+@pytest.fixture(autouse=True)
+def _isolate_olly_dir(tmp_path, monkeypatch):
+    """Point get_olly_dir() at a temp directory so tests never touch ~/.olly/."""
+    test_olly_dir = tmp_path / ".olly"
+    monkeypatch.setattr("olly.state.sqlite.get_olly_dir", lambda: test_olly_dir)
+    monkeypatch.setattr("olly.state.get_olly_dir", lambda: test_olly_dir)
+    monkeypatch.setattr("olly.results.get_olly_dir", lambda: test_olly_dir)
+
+
 @pytest.fixture
 def duckdb_path(tmp_path):
     """Create a DuckDB database with test tables.
@@ -299,10 +308,9 @@ def dashboard_client(tmp_path, monkeypatch):
     """
     from olly.models import ColumnInfo, Finding, TableInfo, VolumeRecord
     from olly.results import write_findings_json
-    from olly.state import get_olly_dir
     from helpers import patch_dashboard
 
-    state_db_path = get_olly_dir(tmp_path) / "state.db"
+    state_db_path = tmp_path / ".olly" / "state.db"
     state_db_path.parent.mkdir(parents=True)
     db = StateDB(db_path=state_db_path)
     db.init_db()
@@ -331,7 +339,7 @@ def dashboard_client(tmp_path, monkeypatch):
     db.store_findings(test_findings)
     db.close()
 
-    findings_path = get_olly_dir(tmp_path) / "findings.json"
+    findings_path = tmp_path / ".olly" / "findings.json"
     write_findings_json(test_findings, findings_path)
 
     return patch_dashboard(monkeypatch, state_db_path, tmp_path)

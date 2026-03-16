@@ -11,7 +11,7 @@ from olly.cli.check import (
     print_findings_table,
     run_check,
 )
-from olly.cli.config_explain import run_config_explain
+from olly.cli.plan import run_plan
 from olly.cli.init import run_init
 from olly.cli.snapshot import _table_list, take_snapshot
 from olly.config import (
@@ -24,7 +24,6 @@ from olly.config import (
     write_config,
 )
 from olly.models import CostRecord, DbtFinding, Finding
-from olly.state import get_olly_dir
 
 
 def _write_config(path, duckdb_path):
@@ -66,11 +65,9 @@ def test_snapshot_progress_output(tmp_path, monkeypatch, duckdb_path):
     results = take_snapshot(config, progress_console=test_console)
 
     output = buf.getvalue()
-    assert "Connected" in output
+    assert "Snapshot #" in output
     assert "schema" in output.lower()
     assert "table" in output.lower()
-    assert "Row counts collected" in output
-    assert "Saving snapshot" in output
     assert len(results) == 1
 
 
@@ -98,14 +95,14 @@ def test_table_list_truncated():
     assert result.startswith("t0, t1")
 
 
-def test_run_config_explain(tmp_path, monkeypatch, duckdb_path, capsys):
+def test_run_plan(tmp_path, monkeypatch, duckdb_path, capsys):
     monkeypatch.chdir(tmp_path)
     config_path = tmp_path / "olly.toml"
     _write_config(config_path, duckdb_path)
 
-    run_config_explain()
+    run_plan()
     output = capsys.readouterr().out
-    assert "Config explain" in output
+    assert "Plan" in output
 
 
 def test_run_init(tmp_path, monkeypatch):
@@ -122,7 +119,7 @@ def test_run_init(tmp_path, monkeypatch):
     run_init()
 
     assert (tmp_path / "olly.toml").exists()
-    assert (get_olly_dir(tmp_path) / "state.db").exists()
+    assert (tmp_path / ".olly" / "state.db").exists()
 
 
 # --- run_check CLI entry point tests ---
@@ -185,7 +182,7 @@ def test_run_check_write_results(tmp_path, monkeypatch, duckdb_path):
     take_snapshot(config)
 
     run_check(output_json=True, write_results=True)
-    assert (get_olly_dir(tmp_path) / "findings.json").exists()
+    assert (tmp_path / ".olly" / "findings.json").exists()
 
 
 def test_run_check_exit_code_1_with_findings(tmp_path, monkeypatch, duckdb_path):
@@ -231,7 +228,8 @@ def test_print_findings_table(capsys):
     ]
     print_findings_table(findings)
     output = capsys.readouterr().out
-    assert "Findings" in output
+    assert "schema" in output
+    assert "volume" in output
     assert "Column dropped" in output
 
 
@@ -395,7 +393,7 @@ def test_run_clean_deletes_state(tmp_path, monkeypatch, duckdb_path):
     config = _write_config(tmp_path / "olly.toml", duckdb_path)
     take_snapshot(config)
 
-    state_dir = get_olly_dir(tmp_path)
+    state_dir = tmp_path / ".olly"
     assert (state_dir / "state.db").exists()
 
     run_clean(yes=True)

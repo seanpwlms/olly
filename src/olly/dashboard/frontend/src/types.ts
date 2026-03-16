@@ -41,6 +41,12 @@ export interface DbtFinding {
   execution_time: number;
   description: string;
   details: Record<string, unknown>;
+  dbt_run_id: number | null;
+}
+
+export interface DbtPreviousSqlResponse {
+  unique_id: string;
+  previous_sql: string | null;
 }
 
 export interface DbtStats {
@@ -48,6 +54,30 @@ export interface DbtStats {
   warning_count: number;
   pass_count: number;
   total_count: number;
+  total_execution_time: number;
+  total_failures: number;
+}
+
+export interface DbtExecutionLeaderboardEntry {
+  unique_id: string;
+  resource_type: string;
+  execution_time: number;
+  status: string;
+  severity: string;
+}
+
+export interface DbtRunHistoryPoint {
+  created_at: string;
+  elapsed_time: number;
+  total_nodes: number;
+  error_count: number;
+  warning_count: number;
+  pass_count: number;
+}
+
+export interface DbtNodeTimingsResponse {
+  unique_id: string;
+  timings: { timestamp: string; execution_time: number }[];
 }
 
 export interface CheckBreakdown {
@@ -216,6 +246,8 @@ export interface DbtResponse {
   dbt_findings: DbtFinding[];
   resource_types: string[];
   severities: string[];
+  execution_leaderboard: DbtExecutionLeaderboardEntry[];
+  run_history: DbtRunHistoryPoint[];
 }
 
 export interface ConnectionsResponse {

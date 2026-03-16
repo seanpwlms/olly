@@ -13,7 +13,7 @@ export function useConnection() {
       search: (prev: Record<string, unknown>) => ({
         ...prev,
         connection: conn || undefined,
-      }),
+      }) as never,
     });
   };
 

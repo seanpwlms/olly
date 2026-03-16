@@ -1,29 +1,46 @@
 import ibis
 import pytest
 
-from olly.models import ColumnInfo, CostRecord, TableInfo, VolumeRecord
+from olly.models import (
+    ColumnInfo,
+    CostRecord,
+    DbtFinding,
+    DbtRunRecord,
+    Finding,
+    TableInfo,
+    VolumeRecord,
+)
 from olly.state import WarehouseStateStore
+
+
+@pytest.fixture(autouse=True)
+def _reset_id_counter():
+    """Reset the module-level ID counter between tests for isolation."""
+    import olly.state.warehouse as wmod
+    old = wmod._id_counter
+    yield
+    wmod._id_counter = old
 
 
 @pytest.fixture
 def wss():
     conn = ibis.duckdb.connect(":memory:")
-    store = WarehouseStateStore(conn, "_olly_test", "duckdb")
+    store = WarehouseStateStore(conn, "_olly_test", "duckdb", create_tables=True)
     yield store
 
 
 def test_create_snapshot(wss):
     sid = wss.create_snapshot()
-    assert sid == 1
+    assert sid > 0
     sid2 = wss.create_snapshot()
-    assert sid2 == 2
+    assert sid2 > sid
 
 
 def test_create_snapshot_with_connection_name(wss):
     sid = wss.create_snapshot(connection_name="prod")
-    assert sid == 1
+    assert sid > 0
     sid2 = wss.create_snapshot(connection_name="staging")
-    assert sid2 == 2
+    assert sid2 > sid
 
 
 def test_store_and_get_schema(wss):
@@ -226,8 +243,8 @@ def test_special_characters(wss):
 def test_idempotent_schema_creation():
     """Creating WarehouseStateStore twice on same schema doesn't error."""
     conn = ibis.duckdb.connect(":memory:")
-    WarehouseStateStore(conn, "_olly_test", "duckdb")
-    WarehouseStateStore(conn, "_olly_test", "duckdb")
+    WarehouseStateStore(conn, "_olly_test", "duckdb", create_tables=True)
+    WarehouseStateStore(conn, "_olly_test", "duckdb", create_tables=True)
 
 
 def test_empty_store_methods(wss):
@@ -482,3 +499,164 @@ def test_connection_name_isolates_unchanged_count(wss):
         )
         == 2
     )
+
+
+# --- _fetchall compatibility tests ---
+
+
+def test_fetchall_with_dbapi_cursor(wss):
+    """_fetchall works with objects that have fetchall()."""
+    class FakeCursor:
+        def fetchall(self):
+            return [(1, "a"), (2, "b")]
+
+    assert wss._fetchall(FakeCursor()) == [(1, "a"), (2, "b")]
+
+
+def test_fetchall_with_iterable(wss):
+    """_fetchall works with iterable dict-like rows (BigQuery RowIterator)."""
+    class FakeRow:
+        def __init__(self, d):
+            self._d = d
+        def values(self):
+            return self._d.values()
+
+    class FakeIterator:
+        def __iter__(self):
+            yield FakeRow({"id": 1, "name": "a"})
+            yield FakeRow({"id": 2, "name": "b"})
+
+    assert wss._fetchall(FakeIterator()) == [(1, "a"), (2, "b")]
+
+
+# --- ID generation tests ---
+
+
+def test_generate_id_monotonic(wss):
+    """Generated IDs are strictly increasing."""
+    ids = [wss._generate_id() for _ in range(100)]
+    assert ids == sorted(ids)
+    assert len(set(ids)) == 100  # all unique
+
+
+def test_primary_key_constraint(wss):
+    """DuckDB dialect creates PRIMARY KEY constraints on id columns."""
+    # Inserting a duplicate id should fail
+    sid = wss.create_snapshot()
+    with pytest.raises(Exception):
+        wss._exec(
+            f"INSERT INTO {wss._table('snapshots')} (id, created_at, connection_name) "
+            f"VALUES ({sid}, '2024-01-01', 'test')"
+        )
+
+
+# --- Findings storage tests ---
+
+
+def test_store_and_retrieve_findings(wss):
+    """Store findings and retrieve them from warehouse."""
+    findings = [
+        Finding("schema", "error", "main", "orders", "Column added: amount",
+                connection_name="primary"),
+        Finding("volume", "warning", "main", "orders", "Z-score 3.5",
+                connection_name="primary", details={"z_score": 3.5}),
+    ]
+    wss.store_findings(findings)
+
+    loaded = wss.get_latest_findings()
+    assert len(loaded) == 2
+    assert loaded[0].check_type in ("schema", "volume")
+
+
+def test_store_empty_findings(wss):
+    """Storing empty findings list is a no-op."""
+    wss.store_findings([])
+    assert wss.get_latest_findings() == []
+
+
+def test_store_findings_with_special_chars(wss):
+    """Findings with quotes in description are escaped correctly."""
+    findings = [
+        Finding("schema", "error", "main", "it's_a_table",
+                "Column 'amount' type changed", connection_name="primary"),
+    ]
+    wss.store_findings(findings)
+
+    loaded = wss.get_latest_findings()
+    assert len(loaded) == 1
+    assert "it's_a_table" in loaded[0].table_name
+
+
+# --- dbt findings and runs ---
+
+
+def test_store_dbt_findings_warehouse(wss):
+    """Store and retrieve dbt findings from warehouse."""
+    run_id = wss.store_dbt_run(DbtRunRecord("inv-1", 10.0, 2, 1, 0, 1))
+    findings = [
+        DbtFinding("model", "error", "model.p.orders", "fail", 5.0, "failed",
+                   details={"compiled_code": "SELECT * FROM orders"}),
+        DbtFinding("test", "pass", "test.p.not_null", "pass", 0.5, "ok"),
+    ]
+    wss.store_dbt_findings(findings, dbt_run_id=run_id)
+
+    loaded = wss.get_latest_dbt_findings()
+    assert len(loaded) == 2
+    assert all(f.dbt_run_id == run_id for f in loaded)
+
+
+def test_store_empty_dbt_findings(wss):
+    """Storing empty dbt findings is a no-op."""
+    wss.store_dbt_findings([])
+    assert wss.get_latest_dbt_findings() == []
+
+
+def test_store_dbt_run_warehouse(wss):
+    """Store and retrieve dbt run records."""
+    run_id = wss.store_dbt_run(DbtRunRecord("inv-1", 42.5, 10, 2, 1, 7))
+    assert run_id > 0
+
+    history = wss.get_dbt_run_history(limit=10)
+    assert len(history) == 1
+    assert history[0].invocation_id == "inv-1"
+
+
+# --- Dispositions ---
+
+
+def test_set_disposition_warehouse(wss):
+    """Set and retrieve dispositions in warehouse."""
+    findings = [
+        Finding("schema", "error", "main", "orders", "Column added",
+                connection_name="primary"),
+    ]
+    wss.store_findings(findings)
+
+    loaded = wss.get_latest_findings()
+    finding_id = loaded[0].id
+
+    disp_id = wss.set_disposition(finding_id, "no_action", comment="expected change")
+    assert disp_id > 0
+
+    disps = wss.get_current_dispositions([finding_id])
+    assert disps[finding_id] == "no_action"
+
+
+def test_set_invalid_disposition_warehouse(wss):
+    """Invalid disposition raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid disposition"):
+        wss.set_disposition(1, "invalid_status")
+
+
+# --- _execute_many with empty rows ---
+
+
+def test_execute_many_empty(wss):
+    """_execute_many with empty rows is a no-op."""
+    wss._execute_many(
+        f"INSERT INTO {wss._table('snapshots')} (id, created_at, connection_name) "
+        "VALUES (:id, :created_at, :connection_name)",
+        ["id", "created_at", "connection_name"],
+        [],
+    )
+    assert not wss.has_snapshots()

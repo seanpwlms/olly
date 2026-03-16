@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import datetime
 from typing import Protocol
 
@@ -11,6 +12,9 @@ from olly.models import CostRecord, TableInfo, UsageRecord, VolumeRecord
 
 logger = logging.getLogger(__name__)
 
+ProgressCallback = Callable[[str, str], None]
+"""Called after each table is processed: ``(schema_name, table_name)``."""
+
 
 class Adapter(Protocol):
     """Protocol that all warehouse adapters must implement."""
@@ -19,11 +23,23 @@ class Adapter(Protocol):
         """Return all schema names in the warehouse."""
         ...
 
-    def fetch_schema_info(self, schemas: list[str]) -> list[TableInfo]:
+    def list_tables(self, schemas: list[str]) -> list[tuple[str, str]]:
+        """Return ``(schema_name, table_name)`` pairs across the given schemas."""
+        ...
+
+    def fetch_schema_info(
+        self,
+        schemas: list[str],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[TableInfo]:
         """Return table/column metadata for the given schemas."""
         ...
 
-    def fetch_row_counts(self, table_infos: list[TableInfo]) -> list[VolumeRecord]:
+    def fetch_row_counts(
+        self,
+        table_infos: list[TableInfo],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[VolumeRecord]:
         """Return current row counts for the given tables."""
         ...
 

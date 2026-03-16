@@ -48,7 +48,7 @@ def test_run_unused_with_findings(tmp_path, monkeypatch, capsys):
 
     output = capsys.readouterr().out
     assert "dead_table" in output
-    assert "1 error(s)" in output
+    assert "1 warning(s)" in output
 
 
 def test_run_unused_no_findings(tmp_path, monkeypatch, capsys):

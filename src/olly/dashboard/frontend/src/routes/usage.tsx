@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { useConnection } from "../hooks/useConnection";
 import { useUsage } from "../hooks/queries";
@@ -9,6 +10,7 @@ import { CostDailyChart } from "../components/CostDailyChart";
 import { ErrorState } from "../components/ErrorState";
 import { SkeletonStatCards, SkeletonChart, SkeletonTable } from "../components/Skeleton";
 import { DataTable, type Column } from "../components/DataTable";
+import { Pagination } from "../components/Pagination";
 import type { Finding, LeastUsedTable } from "../types";
 
 interface CostTable {
@@ -25,11 +27,16 @@ interface CostUser {
 export function UsagePage() {
   const { connection } = useConnection();
   const { data, isLoading, isError, refetch } = useUsage(connection);
+  const [usagePage, setUsagePage] = useState(1);
 
   if (isError) return <ErrorState message="Failed to load usage data." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <><SkeletonStatCards count={3} /><SkeletonChart /><SkeletonTable rows={5} cols={4} /></>;
 
   const { stats, usage_findings, cost_summary, cost_daily, least_used } = data;
+
+  const PAGE_SIZE = 25;
+  const usageTotalPages = Math.ceil(usage_findings.length / PAGE_SIZE);
+  const pagedFindings = usage_findings.slice((usagePage - 1) * PAGE_SIZE, usagePage * PAGE_SIZE);
 
   const usageFindingsColumns: Column<Finding>[] = [
     {
@@ -128,30 +135,6 @@ export function UsagePage() {
         )}
       </StatsRow>
 
-      <section className="mb-6">
-        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Unused &amp; Stale Tables</h2>
-        {usage_findings.length > 0 ? (
-          <DataTable
-            data={usage_findings}
-            columns={usageFindingsColumns}
-            rowKey={(f) => `${f.schema_name}.${f.table_name}`}
-          />
-        ) : (
-          <EmptyState message="No unused or stale tables detected." />
-        )}
-      </section>
-
-      {least_used.length > 0 && (
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Top 10 Least Used Tables</h2>
-          <DataTable
-            data={least_used}
-            columns={leastUsedColumns}
-            rowKey={(t) => `${t.schema_name}.${t.table_name}`}
-          />
-        </section>
-      )}
-
       {cost_summary && (
         <section className="mb-6">
           <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Cost Breakdown</h2>
@@ -181,6 +164,40 @@ export function UsagePage() {
           )}
         </section>
       )}
+
+      {least_used.length > 0 && (
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Top 10 Least Used Tables</h2>
+          <DataTable
+            data={least_used}
+            columns={leastUsedColumns}
+            rowKey={(t) => `${t.schema_name}.${t.table_name}`}
+          />
+        </section>
+      )}
+
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+          Unused &amp; Stale Tables
+          {usage_findings.length > 0 && (
+            <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+              ({usage_findings.length})
+            </span>
+          )}
+        </h2>
+        {usage_findings.length > 0 ? (
+          <>
+            <DataTable
+              data={pagedFindings}
+              columns={usageFindingsColumns}
+              rowKey={(f) => `${f.schema_name}.${f.table_name}`}
+            />
+            <Pagination page={usagePage} totalPages={usageTotalPages} onPageChange={setUsagePage} />
+          </>
+        ) : (
+          <EmptyState message="No unused or stale tables detected." />
+        )}
+      </section>
     </>
   );
 }

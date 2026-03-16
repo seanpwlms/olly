@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from olly.state.base import BaseStateStore
@@ -13,27 +14,30 @@ logger = logging.getLogger(__name__)
 _DIALECTS: dict[str, dict[str, Any]] = {
     "duckdb": {
         "text": "VARCHAR",
-        "integer": "INTEGER",
+        "integer": "BIGINT",
         "real": "DOUBLE",
         "boolean": "BOOLEAN",
         "quote": lambda s: f'"{s}"',
         "indexes": True,
+        "primary_key": True,
     },
     "postgres": {
         "text": "TEXT",
-        "integer": "INTEGER",
+        "integer": "BIGINT",
         "real": "DOUBLE PRECISION",
         "boolean": "BOOLEAN",
         "quote": lambda s: f'"{s}"',
         "indexes": True,
+        "primary_key": True,
     },
     "snowflake": {
         "text": "VARCHAR",
-        "integer": "INTEGER",
+        "integer": "BIGINT",
         "real": "DOUBLE",
         "boolean": "BOOLEAN",
         "quote": lambda s: f'"{s}"',
         "indexes": False,
+        "primary_key": True,
     },
     "bigquery": {
         "text": "STRING",
@@ -42,8 +46,12 @@ _DIALECTS: dict[str, dict[str, Any]] = {
         "boolean": "BOOL",
         "quote": lambda s: f"`{s}`",
         "indexes": False,
+        "primary_key": False,
     },
 }
+
+# Monotonic counter to avoid ID collisions within a single process
+_id_counter = 0
 
 
 def _escape(value: str) -> str:
@@ -54,14 +62,19 @@ def _escape(value: str) -> str:
 class WarehouseStateStore(BaseStateStore):
     """State store backed by tables in the connected data warehouse.
 
-    Note: Concurrent snapshots against the same warehouse state schema are
-    not supported. The ``_next_id()`` approach (MAX(id) + 1) is not safe
-    for concurrent access.
+    IDs are generated using microsecond timestamps with a monotonic
+    in-process counter to avoid collisions within a single process.
+    Concurrent processes are unlikely to collide but this is not fully
+    ACID-safe across multiple independent ``olly`` invocations.
     """
 
-    def __init__(self, conn: Any, schema: str, conn_type: str) -> None:
+    def __init__(
+        self, conn: Any, schema: str, conn_type: str,
+        *, create_tables: bool = False,
+    ) -> None:
         self._conn = conn
         self._schema = schema
+        self._conn_type = conn_type
         dialect = _DIALECTS.get(conn_type, _DIALECTS["postgres"])
         self._quote = dialect["quote"]
         self._text = dialect["text"]
@@ -69,7 +82,23 @@ class WarehouseStateStore(BaseStateStore):
         self._real = dialect["real"]
         self._boolean = dialect["boolean"]
         self._indexes = dialect["indexes"]
-        self._init_tables()
+        self._primary_key = dialect["primary_key"]
+        if create_tables:
+            self._init_tables()
+
+    #: Logical table names created in the state schema.
+    TABLE_NAMES: list[str] = [
+        "snapshots",
+        "schema_snapshot",
+        "volume_snapshot",
+        "cost_runs",
+        "cost_records",
+        "findings",
+        "dbt_findings",
+        "finding_dispositions",
+        "dbt_runs",
+        "dbt_node_timings",
+    ]
 
     def _table(self, name: str) -> str:
         return f"{self._quote(self._schema)}.{self._quote(name)}"
@@ -77,10 +106,21 @@ class WarehouseStateStore(BaseStateStore):
     def _exec(self, sql: str) -> Any:
         return self._conn.raw_sql(sql)
 
+    def _fetchall(self, result: Any) -> list[tuple]:
+        """Convert a query result to a list of tuples.
+
+        Handles both DBAPI cursors (which have ``fetchall``) and BigQuery's
+        ``RowIterator`` (which is iterable but lacks ``fetchall``).
+        """
+        if hasattr(result, "fetchall"):
+            return result.fetchall()
+        # BigQuery RowIterator: rows are dict-like objects
+        return [tuple(row.values()) for row in result]
+
     def _query(self, sql: str, params: dict[str, Any] | None = None) -> list[tuple]:
         resolved = self._resolve_params(sql, params)
         result = self._exec(resolved)
-        return result.fetchall()
+        return self._fetchall(result)
 
     def _execute(self, sql: str, params: dict[str, Any] | None = None) -> int | None:
         resolved = self._resolve_params(sql, params)
@@ -138,18 +178,25 @@ class WarehouseStateStore(BaseStateStore):
             f"DELETE FROM {self._table(table)} WHERE {column} IN ({id_list})"
         )
 
-    # Override create_snapshot to use _next_id since warehouse has no AUTOINCREMENT
-    def _next_id(self, table: str = "snapshots") -> int:
-        """Get next ID for a table. Not safe for concurrent access."""
-        row = self._query_one(
-            f"SELECT COALESCE(MAX(id), 0) + 1 FROM {self._table(table)}"
-        )
-        return row[0] if row else 1
+    # Override create_snapshot to use _generate_id since warehouse has no AUTOINCREMENT
+    def _generate_id(self) -> int:
+        """Generate a unique ID using microsecond timestamps.
+
+        Uses ``time.time_ns() // 1000`` (microseconds since epoch) combined
+        with a monotonic in-process counter to guarantee uniqueness within a
+        single process. Concurrent processes are unlikely to collide given
+        microsecond resolution, but this is not fully ACID-safe across
+        multiple independent processes.
+        """
+        global _id_counter  # noqa: PLW0603
+        ts = time.time_ns() // 1000
+        _id_counter += 1
+        return ts + _id_counter
 
     def create_snapshot(self, connection_name: str = "") -> int:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        new_id = self._next_id("snapshots")
+        new_id = self._generate_id()
         self._exec(
             f"INSERT INTO {self._table('snapshots')} (id, created_at, connection_name) "
             f"VALUES ({new_id}, '{_escape(now)}', '{_escape(connection_name)}')"
@@ -164,7 +211,7 @@ class WarehouseStateStore(BaseStateStore):
         import json
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        finding_id = self._next_id("findings")
+        finding_id = self._generate_id()
         values = []
         for f in findings:
             details_json = json.dumps(f.details).replace("'", "''")
@@ -183,14 +230,17 @@ class WarehouseStateStore(BaseStateStore):
         )
         logger.debug("Stored %d findings to warehouse", len(findings))
 
-    def store_dbt_findings(self, dbt_findings: list) -> None:
+    def store_dbt_findings(
+        self, dbt_findings: list, *, dbt_run_id: int | None = None,
+    ) -> None:
         """Override to include auto-generated IDs for warehouse."""
         if not dbt_findings:
             return
         import json
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        finding_id = self._next_id("dbt_findings")
+        finding_id = self._generate_id()
+        run_id_sql = str(dbt_run_id) if dbt_run_id is not None else "NULL"
         values = []
         for f in dbt_findings:
             details_json = json.dumps(f.details).replace("'", "''")
@@ -198,13 +248,13 @@ class WarehouseStateStore(BaseStateStore):
                 f"({finding_id}, '{_escape(now)}', '{_escape(f.resource_type)}', "
                 f"'{_escape(f.severity)}', '{_escape(f.unique_id)}', "
                 f"'{_escape(f.status)}', {f.execution_time}, "
-                f"'{_escape(f.description)}', '{details_json}')"
+                f"'{_escape(f.description)}', '{details_json}', {run_id_sql})"
             )
             finding_id += 1
         self._exec(
             f"INSERT INTO {self._table('dbt_findings')} "
             f"(id, created_at, resource_type, severity, unique_id, status, "
-            f"execution_time, description, details) "
+            f"execution_time, description, details, dbt_run_id) "
             f"VALUES {', '.join(values)}"
         )
         logger.debug("Stored %d dbt findings to warehouse", len(dbt_findings))
@@ -217,6 +267,7 @@ class WarehouseStateStore(BaseStateStore):
         i = self._integer
         r = self._real
         b = self._boolean
+        pk = " PRIMARY KEY" if self._primary_key else ""
         snapshots = self._table("snapshots")
         schema_snap = self._table("schema_snapshot")
         volume_snap = self._table("volume_snapshot")
@@ -225,7 +276,7 @@ class WarehouseStateStore(BaseStateStore):
 
         self._exec(
             f"CREATE TABLE IF NOT EXISTS {snapshots} ("
-            f"id {i} NOT NULL, "
+            f"id {i} NOT NULL{pk}, "
             f"created_at {t} NOT NULL, "
             f"connection_name {t} NOT NULL)"
         )
@@ -248,7 +299,7 @@ class WarehouseStateStore(BaseStateStore):
         )
         self._exec(
             f"CREATE TABLE IF NOT EXISTS {cost_runs} ("
-            f"id {i} NOT NULL, "
+            f"id {i} NOT NULL{pk}, "
             f"created_at {t} NOT NULL, "
             f"connection_name {t} NOT NULL)"
         )
@@ -267,7 +318,7 @@ class WarehouseStateStore(BaseStateStore):
         dbt_findings = self._table("dbt_findings")
         self._exec(
             f"CREATE TABLE IF NOT EXISTS {findings} ("
-            f"id {i} NOT NULL, "
+            f"id {i} NOT NULL{pk}, "
             f"created_at {t} NOT NULL, "
             f"connection_name {t} NOT NULL, "
             f"check_type {t} NOT NULL, "
@@ -279,7 +330,7 @@ class WarehouseStateStore(BaseStateStore):
         )
         self._exec(
             f"CREATE TABLE IF NOT EXISTS {dbt_findings} ("
-            f"id {i} NOT NULL, "
+            f"id {i} NOT NULL{pk}, "
             f"created_at {t} NOT NULL, "
             f"resource_type {t} NOT NULL, "
             f"severity {t} NOT NULL, "
@@ -287,18 +338,43 @@ class WarehouseStateStore(BaseStateStore):
             f"status {t} NOT NULL, "
             f"execution_time {r} NOT NULL, "
             f"description {t} NOT NULL, "
-            f"details {t} NOT NULL)"
+            f"details {t} NOT NULL, "
+            f"dbt_run_id {i})"
         )
 
         dispositions = self._table("finding_dispositions")
         self._exec(
             f"CREATE TABLE IF NOT EXISTS {dispositions} ("
-            f"id {i} NOT NULL, "
+            f"id {i} NOT NULL{pk}, "
             f"finding_id {i} NOT NULL, "
             f"disposition {t} NOT NULL, "
             f"comment {t} NOT NULL, "
             f"created_at {t} NOT NULL, "
             f"created_by {t} NOT NULL)"
+        )
+
+        dbt_runs = self._table("dbt_runs")
+        self._exec(
+            f"CREATE TABLE IF NOT EXISTS {dbt_runs} ("
+            f"id {i} NOT NULL{pk}, "
+            f"created_at {t} NOT NULL, "
+            f"invocation_id {t} NOT NULL, "
+            f"elapsed_time {r} NOT NULL, "
+            f"total_nodes {i} NOT NULL, "
+            f"error_count {i} NOT NULL, "
+            f"warning_count {i} NOT NULL, "
+            f"pass_count {i} NOT NULL)"
+        )
+
+        dbt_node_timings = self._table("dbt_node_timings")
+        self._exec(
+            f"CREATE TABLE IF NOT EXISTS {dbt_node_timings} ("
+            f"id {i} NOT NULL{pk}, "
+            f"dbt_run_id {i} NOT NULL, "
+            f"unique_id {t} NOT NULL, "
+            f"resource_type {t} NOT NULL, "
+            f"execution_time {r} NOT NULL, "
+            f"status {t} NOT NULL)"
         )
 
         if self._indexes:
@@ -330,13 +406,25 @@ class WarehouseStateStore(BaseStateStore):
                 f"CREATE INDEX IF NOT EXISTS idx_wss_dispositions_fid "
                 f"ON {dispositions}(finding_id)"
             )
+            self._exec(
+                f"CREATE INDEX IF NOT EXISTS idx_wss_dbt_runs_created "
+                f"ON {dbt_runs}(created_at)"
+            )
+            self._exec(
+                f"CREATE INDEX IF NOT EXISTS idx_wss_dbt_node_timings_run "
+                f"ON {dbt_node_timings}(dbt_run_id)"
+            )
+            self._exec(
+                f"CREATE INDEX IF NOT EXISTS idx_wss_dbt_node_timings_uid "
+                f"ON {dbt_node_timings}(unique_id)"
+            )
 
         logger.debug("Initialized warehouse state in schema %s", self._schema)
 
     def _create_cost_run(self, connection_name: str = "") -> int:
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
-        new_id = self._next_id("cost_runs")
+        new_id = self._generate_id()
         self._exec(
             f"INSERT INTO {self._table('cost_runs')} (id, created_at, connection_name) "
             f"VALUES ({new_id}, '{_escape(now)}', '{_escape(connection_name)}')"
@@ -347,7 +435,7 @@ class WarehouseStateStore(BaseStateStore):
         self, finding_id: int, disposition: str,
         comment: str = "", created_by: str = "",
     ) -> int:
-        """Override to use _next_id for warehouse backends."""
+        """Override to use generated IDs for warehouse backends."""
         from datetime import datetime, timezone
 
         from olly.models import Disposition
@@ -357,12 +445,27 @@ class WarehouseStateStore(BaseStateStore):
             msg = f"Invalid disposition {disposition!r}, must be one of {valid}"
             raise ValueError(msg)
         now = datetime.now(timezone.utc).isoformat()
-        new_id = self._next_id("finding_dispositions")
+        new_id = self._generate_id()
         self._exec(
             f"INSERT INTO {self._table('finding_dispositions')} "
             f"(id, finding_id, disposition, comment, created_at, created_by) "
             f"VALUES ({new_id}, {finding_id}, '{_escape(disposition)}', "
             f"'{_escape(comment)}', '{_escape(now)}', '{_escape(created_by)}')"
+        )
+        return new_id
+
+    def store_dbt_run(self, run_record) -> int:
+        """Override to use generated IDs for warehouse backends."""
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).isoformat()
+        new_id = self._generate_id()
+        self._exec(
+            f"INSERT INTO {self._table('dbt_runs')} "
+            f"(id, created_at, invocation_id, elapsed_time, total_nodes, "
+            f"error_count, warning_count, pass_count) "
+            f"VALUES ({new_id}, '{_escape(now)}', '{_escape(run_record.invocation_id)}', "
+            f"{run_record.elapsed_time}, {run_record.total_nodes}, "
+            f"{run_record.error_count}, {run_record.warning_count}, {run_record.pass_count})"
         )
         return new_id
 

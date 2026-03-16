@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import re
 import sqlite3
@@ -74,7 +73,8 @@ CREATE TABLE IF NOT EXISTS dbt_findings (
     status TEXT NOT NULL,
     execution_time REAL NOT NULL,
     description TEXT NOT NULL,
-    details TEXT NOT NULL
+    details TEXT NOT NULL,
+    dbt_run_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS finding_dispositions (
@@ -86,6 +86,26 @@ CREATE TABLE IF NOT EXISTS finding_dispositions (
     created_by TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS dbt_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TEXT NOT NULL,
+    invocation_id TEXT NOT NULL,
+    elapsed_time REAL NOT NULL,
+    total_nodes INTEGER NOT NULL,
+    error_count INTEGER NOT NULL,
+    warning_count INTEGER NOT NULL,
+    pass_count INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS dbt_node_timings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dbt_run_id INTEGER NOT NULL REFERENCES dbt_runs(id),
+    unique_id TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    execution_time REAL NOT NULL,
+    status TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_schema_snapshot_sid ON schema_snapshot(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_volume_snapshot_sid ON volume_snapshot(snapshot_id);
 CREATE INDEX IF NOT EXISTS idx_cost_records_run_id ON cost_records(cost_run_id);
@@ -93,6 +113,9 @@ CREATE INDEX IF NOT EXISTS idx_findings_created_at ON findings(created_at);
 CREATE INDEX IF NOT EXISTS idx_findings_connection ON findings(connection_name);
 CREATE INDEX IF NOT EXISTS idx_dbt_findings_created_at ON dbt_findings(created_at);
 CREATE INDEX IF NOT EXISTS idx_finding_dispositions_fid ON finding_dispositions(finding_id);
+CREATE INDEX IF NOT EXISTS idx_dbt_runs_created_at ON dbt_runs(created_at);
+CREATE INDEX IF NOT EXISTS idx_dbt_node_timings_run_id ON dbt_node_timings(dbt_run_id);
+CREATE INDEX IF NOT EXISTS idx_dbt_node_timings_unique_id ON dbt_node_timings(unique_id);
 """
 
 # Regex to convert :name placeholders to ? for sqlite3
@@ -113,27 +136,9 @@ def _to_positional(sql: str, params: dict[str, Any] | None) -> tuple[str, tuple]
     return converted, tuple(ordered)
 
 
-def get_olly_dir(project_root: Path | None = None) -> Path:
-    """Compute the olly state directory path for the current project.
-
-    Returns ``~/.olly/<project-hash>/`` where the hash is based on the
-    absolute path of the project root.
-    """
-    if project_root is None:
-        cwd = Path.cwd()
-        current = cwd
-        while True:
-            if (current / "olly.toml").exists():
-                project_root = current
-                break
-            if current.parent == current:
-                project_root = cwd
-                break
-            current = current.parent
-
-    abs_path = project_root.resolve()
-    path_hash = hashlib.sha256(str(abs_path).encode()).hexdigest()[:16]
-    return Path.home() / ".olly" / path_hash
+def get_olly_dir() -> Path:
+    """Return the olly state directory path (``~/.olly/``)."""
+    return Path.home() / ".olly"
 
 
 class StateDB(BaseStateStore):
@@ -191,6 +196,47 @@ class StateDB(BaseStateStore):
                 ");"
                 "CREATE INDEX IF NOT EXISTS idx_finding_dispositions_fid "
                 "ON finding_dispositions(finding_id);"
+            )
+
+        if "dbt_runs" not in tables:
+            self.conn.executescript(
+                "CREATE TABLE IF NOT EXISTS dbt_runs ("
+                "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "    created_at TEXT NOT NULL,"
+                "    invocation_id TEXT NOT NULL,"
+                "    elapsed_time REAL NOT NULL,"
+                "    total_nodes INTEGER NOT NULL,"
+                "    error_count INTEGER NOT NULL,"
+                "    warning_count INTEGER NOT NULL,"
+                "    pass_count INTEGER NOT NULL"
+                ");"
+                "CREATE INDEX IF NOT EXISTS idx_dbt_runs_created_at ON dbt_runs(created_at);"
+            )
+
+        # Add dbt_run_id column to dbt_findings for existing databases
+        if "dbt_findings" in tables:
+            dbt_cols = {
+                row[1]
+                for row in self.conn.execute("PRAGMA table_info(dbt_findings)").fetchall()
+            }
+            if "dbt_run_id" not in dbt_cols:
+                self.conn.execute(
+                    "ALTER TABLE dbt_findings ADD COLUMN dbt_run_id INTEGER"
+                )
+                self.conn.commit()
+
+        if "dbt_node_timings" not in tables:
+            self.conn.executescript(
+                "CREATE TABLE IF NOT EXISTS dbt_node_timings ("
+                "    id INTEGER PRIMARY KEY AUTOINCREMENT,"
+                "    dbt_run_id INTEGER NOT NULL REFERENCES dbt_runs(id),"
+                "    unique_id TEXT NOT NULL,"
+                "    resource_type TEXT NOT NULL,"
+                "    execution_time REAL NOT NULL,"
+                "    status TEXT NOT NULL"
+                ");"
+                "CREATE INDEX IF NOT EXISTS idx_dbt_node_timings_run_id ON dbt_node_timings(dbt_run_id);"
+                "CREATE INDEX IF NOT EXISTS idx_dbt_node_timings_unique_id ON dbt_node_timings(unique_id);"
             )
 
     def _table(self, name: str) -> str:
