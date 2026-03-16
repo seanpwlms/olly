@@ -213,12 +213,12 @@ def patch_dashboard(monkeypatch, state_db_path, tmp_path):
     from fastapi.testclient import TestClient
 
     from olly.config import OllyConfig
-    from olly.state import StateDB, get_olly_dir
+    from olly.state import StateDB
 
-    test_olly_dir = get_olly_dir(tmp_path)
+    test_olly_dir = tmp_path / ".olly"
 
-    monkeypatch.setattr("olly.state.get_olly_dir", lambda project_root=None: test_olly_dir)
-    monkeypatch.setattr("olly.results.get_olly_dir", lambda project_root=None: test_olly_dir)
+    monkeypatch.setattr("olly.state.get_olly_dir", lambda: test_olly_dir)
+    monkeypatch.setattr("olly.results.get_olly_dir", lambda: test_olly_dir)
 
     @contextmanager
     def mock_state_db(connection_name: str = "", config=None):

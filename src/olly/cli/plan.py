@@ -5,14 +5,14 @@ from rich.console import Console
 from olly.adapter import Adapter, connect_typed
 from olly.config import load_config
 from olly.config_ops import resolve_connections
-from olly.explain import explain_config, format_explain
+from olly.plan import format_plan, resolve_plan
 from olly.logging import setup_logging
 
 console = Console()
 
 
-def run_config_explain(connection_name: str | None = None) -> None:
-    """CLI entry point for ``olly config explain``.
+def run_plan(connection_name: str | None = None) -> None:
+    """CLI entry point for ``olly plan``.
 
     Loads the config, connects to the warehouse, and prints a human-readable
     breakdown of which schemas and tables are selected and how settings
@@ -30,5 +30,5 @@ def run_config_explain(connection_name: str | None = None) -> None:
                 f"[yellow]Could not connect to '{name}': {e}. "
                 "Showing config-only output.[/yellow]\n"
             )
-    result = explain_config(config, backends, connection_name=connection_name)
-    console.print(format_explain(result))
+    result = resolve_plan(config, backends, connection_name=connection_name)
+    console.print(format_plan(result))

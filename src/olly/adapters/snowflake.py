@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import ibis
 
 from olly.adapters.base import BaseAdapter
 from olly.models import ColumnInfo, TableInfo, VolumeRecord
+
+if TYPE_CHECKING:
+    from olly.adapter import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -84,11 +87,16 @@ class SnowflakeAdapter(BaseAdapter):
                 logger.debug("Skipping database %s (no access)", db)
         return schemas
 
-    def fetch_schema_info(self, schemas: list[str]) -> list[TableInfo]:
+    def fetch_schema_info(
+        self,
+        schemas: list[str],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[TableInfo]:
         """Introspect tables and columns for the given schemas.
 
         Args:
             schemas: Schema names as ``"database.schema"`` strings.
+            on_progress: Optional callback invoked after each table is processed.
 
         Returns:
             A list of ``TableInfo`` objects with column metadata.
@@ -115,6 +123,8 @@ class SnowflakeAdapter(BaseAdapter):
                         columns=col_list,
                     )
                 )
+                if on_progress:
+                    on_progress(dotted, tbl)
         return tables
 
     def _fetch_table_metadata(
@@ -194,7 +204,11 @@ class SnowflakeAdapter(BaseAdapter):
             columns.setdefault(key, []).append(col)
         return columns
 
-    def fetch_row_counts(self, table_infos: list[TableInfo]) -> list[VolumeRecord]:
+    def fetch_row_counts(
+        self,
+        table_infos: list[TableInfo],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[VolumeRecord]:
         """Fetch row counts for the given tables, skipping views.
 
         When ``use_account_usage`` is enabled, reads counts from
@@ -203,6 +217,7 @@ class SnowflakeAdapter(BaseAdapter):
 
         Args:
             table_infos: Tables to count rows for.
+            on_progress: Optional callback invoked after each table is processed.
 
         Returns:
             A list of ``VolumeRecord`` objects with row counts.
@@ -247,6 +262,8 @@ class SnowflakeAdapter(BaseAdapter):
                             row_count=row_count,
                         )
                     )
+                    if on_progress:
+                        on_progress(ti.schema_name, ti.table_name)
         else:
             for ti in table_infos:
                 if ti.table_type == "VIEW":
@@ -264,6 +281,8 @@ class SnowflakeAdapter(BaseAdapter):
                             row_count=count,
                         )
                     )
+                    if on_progress:
+                        on_progress(ti.schema_name, ti.table_name)
                 except Exception as exc:
                     raise RuntimeError(
                         f"Failed to fetch row count for {ti.schema_name}.{ti.table_name}"

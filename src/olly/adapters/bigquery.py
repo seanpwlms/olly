@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import ibis
 
 from olly.adapters.base import BaseAdapter
 from olly.models import ColumnInfo, CostRecord, TableInfo, UsageRecord, VolumeRecord
+
+if TYPE_CHECKING:
+    from olly.adapter import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -115,11 +118,16 @@ class BigQueryAdapter(BaseAdapter):
         """Return all dataset names in the connected project."""
         return self._conn.list_databases()
 
-    def fetch_schema_info(self, schemas: list[str]) -> list[TableInfo]:
+    def fetch_schema_info(
+        self,
+        schemas: list[str],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[TableInfo]:
         """Introspect tables and columns for the given schemas.
 
         Args:
             schemas: Dataset names to introspect.
+            on_progress: Optional callback invoked after each table is processed.
 
         Returns:
             A list of ``TableInfo`` objects with column metadata.
@@ -150,6 +158,8 @@ class BigQueryAdapter(BaseAdapter):
                         columns=columns,
                     )
                 )
+                if on_progress:
+                    on_progress(schema_name, table_name)
         return tables
 
     def _fetch_table_metadata(
@@ -206,7 +216,11 @@ class BigQueryAdapter(BaseAdapter):
             ) from exc
         return "TABLE"
 
-    def fetch_row_counts(self, table_infos: list[TableInfo]) -> list[VolumeRecord]:
+    def fetch_row_counts(
+        self,
+        table_infos: list[TableInfo],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[VolumeRecord]:
         """Fetch row counts for the given tables, skipping views.
 
         Uses INFORMATION_SCHEMA row counts when enabled, otherwise falls
@@ -214,6 +228,7 @@ class BigQueryAdapter(BaseAdapter):
 
         Args:
             table_infos: Tables to count rows for.
+            on_progress: Optional callback invoked after each table is processed.
 
         Returns:
             A list of ``VolumeRecord`` objects with row counts.
@@ -262,6 +277,8 @@ class BigQueryAdapter(BaseAdapter):
                     raise RuntimeError(
                         f"Failed to fetch row count for {ti.schema_name}.{ti.table_name}"
                     ) from exc
+            if on_progress:
+                on_progress(ti.schema_name, ti.table_name)
         return records
 
     def fetch_max_timestamp(
@@ -365,6 +382,7 @@ class BigQueryAdapter(BaseAdapter):
             "AND j.creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), "
             f"INTERVAL {int(lookback_days)} DAY) "
             f"AND ref.dataset_id IN ({schema_filter}) "
+            "AND ref.table_id NOT LIKE 'INFORMATION_SCHEMA.%' "
             "GROUP BY ref.dataset_id, ref.table_id"
         )
 
@@ -433,6 +451,7 @@ class BigQueryAdapter(BaseAdapter):
             "AND j.creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), "
             f"INTERVAL {int(lookback_days)} DAY) "
             f"AND ref.dataset_id IN ({schema_filter}) "
+            "AND ref.table_id NOT LIKE 'INFORMATION_SCHEMA.%' "
             "GROUP BY ref.dataset_id, ref.table_id, j.user_email"
         )
 

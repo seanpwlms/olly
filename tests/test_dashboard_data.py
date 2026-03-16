@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from olly.dashboard.data import (
+    build_cost_summary,
     filter_findings,
     get_findings_by_connection,
     get_findings_by_table,
@@ -15,10 +16,8 @@ from olly.dashboard.data import (
     get_usage_stats,
     get_volume_stats,
     get_volume_timeseries,
-    load_cost_summary,
 )
 from olly.models import ColumnInfo, CostRecord, Finding, TableInfo, VolumeRecord
-from olly.results import write_findings_json
 from olly.state import StateDB
 
 
@@ -267,22 +266,30 @@ def test_get_usage_stats():
     assert stats_no_cost.total_cost_usd is None
 
 
-def test_load_cost_summary(tmp_path):
-    path = tmp_path / "findings.json"
+def test_build_cost_summary(tmp_path):
+    state_db = StateDB(db_path=tmp_path / "state.db")
+    state_db.init_db()
     cost_records = [
-        CostRecord("main", "orders", "user@test.com", 1000000, 10.50, 5),
+        CostRecord("main", "orders", "alice@test.com", 1000000, 10.50, 5),
+        CostRecord("main", "orders", "bob@test.com", 500000, 5.25, 3),
+        CostRecord("main", "customers", "alice@test.com", 200000, 2.00, 2),
     ]
-    write_findings_json([], path, cost_records=cost_records)
-    summary = load_cost_summary(path)
+    state_db.store_cost_data(cost_records, "default")
+    summary = build_cost_summary(state_db, "default")
     assert summary is not None
-    assert summary["total_cost_usd"] == 10.50
-    assert len(summary["top_tables"]) == 1
+    assert summary["total_cost_usd"] == pytest.approx(17.75)
+    assert len(summary["top_tables"]) == 2
+    assert summary["top_tables"][0]["table"] == "orders"
+    assert summary["top_tables"][0]["cost_usd"] == pytest.approx(15.75)
+    assert len(summary["top_users"]) == 2
+    assert summary["top_users"][0]["user"] == "alice@test.com"
+    assert summary["top_users"][0]["cost_usd"] == pytest.approx(12.50)
 
 
-def test_load_cost_summary_missing(tmp_path):
-    path = tmp_path / "findings.json"
-    write_findings_json([], path)
-    summary = load_cost_summary(path)
+def test_build_cost_summary_no_records(tmp_path):
+    state_db = StateDB(db_path=tmp_path / "state.db")
+    state_db.init_db()
+    summary = build_cost_summary(state_db, "default")
     assert summary is None
 
 

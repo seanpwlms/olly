@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Self
 
-from olly.models import ColumnInfo, CostRecord, DbtFinding, Disposition, Finding, TableInfo, VolumeRecord
+from olly.models import ColumnInfo, CostRecord, TableInfo, VolumeRecord
+from olly.state.dbt_mixin import DbtStateMixin
+from olly.state.findings_mixin import FindingsStateMixin
 
 if TYPE_CHECKING:
     from olly.config import OllyConfig
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 _SNAPSHOT_TABLES = ("schema_snapshot", "volume_snapshot")
 
 
-class BaseStateStore(ABC):
+class BaseStateStore(FindingsStateMixin, DbtStateMixin, ABC):
     """Abstract base with all shared business logic.
 
     Subclasses provide SQL execution primitives and table name resolution.
@@ -470,222 +471,36 @@ class BaseStateStore(ABC):
         )
         return bool(row and row[0] >= 2)
 
-    # --- Findings ---
-
-    def get_last_check_time(self) -> str | None:
-        """Return the most recent created_at from the findings table, or None."""
-        row = self._query_one(
-            f"SELECT MAX(created_at) FROM {self._table('findings')}"
-        )
-        return row[0] if row and row[0] else None
-
-    def store_findings(self, findings: list[Finding]) -> None:
-        if not findings:
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        rows = [
-            (
-                now,
-                f.connection_name,
-                f.check_type,
-                f.severity,
-                f.schema_name,
-                f.table_name,
-                f.description,
-                json.dumps(f.details),
-            )
-            for f in findings
-        ]
-        self._execute_many(
-            f"INSERT INTO {self._table('findings')} "  # noqa: S608
-            "(created_at, connection_name, check_type, severity, schema_name, "
-            "table_name, description, details) "
-            "VALUES (:created_at, :connection_name, :check_type, :severity, "
-            ":schema_name, :table_name, :description, :details)",
-            ["created_at", "connection_name", "check_type", "severity",
-             "schema_name", "table_name", "description", "details"],
-            rows,
-        )
-        logger.debug("Stored %d findings", len(findings))
-
-    def store_dbt_findings(self, dbt_findings: list[DbtFinding]) -> None:
-        if not dbt_findings:
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        rows = [
-            (
-                now,
-                f.resource_type,
-                f.severity,
-                f.unique_id,
-                f.status,
-                f.execution_time,
-                f.description,
-                json.dumps(f.details),
-            )
-            for f in dbt_findings
-        ]
-        self._execute_many(
-            f"INSERT INTO {self._table('dbt_findings')} "  # noqa: S608
-            "(created_at, resource_type, severity, unique_id, status, "
-            "execution_time, description, details) "
-            "VALUES (:created_at, :resource_type, :severity, :unique_id, "
-            ":status, :execution_time, :description, :details)",
-            ["created_at", "resource_type", "severity", "unique_id",
-             "status", "execution_time", "description", "details"],
-            rows,
-        )
-        logger.debug("Stored %d dbt findings", len(dbt_findings))
-
-    _FINDING_SELECT = (
-        "SELECT id, connection_name, check_type, severity, "
-        "schema_name, table_name, description, details, created_at"
-    )
-
-    def get_latest_findings(self, connection_name: str | None = None) -> list[Finding]:
-        """Return findings from the most recent check run only."""
-        last_check = self.get_last_check_time()
-        if not last_check:
-            return []
-        t = self._table("findings")
-        params: dict[str, Any] = {"created_at": last_check}
-        where = "WHERE created_at = :created_at"
-        if connection_name is not None:
-            where += " AND connection_name = :connection_name"
-            params["connection_name"] = connection_name
-        rows = self._query(f"{self._FINDING_SELECT} FROM {t} {where}", params)  # noqa: S608
-        return self._rows_to_findings(rows)
-
-    def get_findings_history(self, limit: int = 100, connection_name: str | None = None) -> list[Finding]:
-        t = self._table("findings")
-        params: dict[str, Any] = {"limit": limit}
-        where = ""
-        if connection_name is not None:
-            where = "WHERE connection_name = :connection_name "
-            params["connection_name"] = connection_name
-        rows = self._query(
-            f"{self._FINDING_SELECT} FROM {t} {where}ORDER BY created_at DESC LIMIT :limit",  # noqa: S608
-            params,
-        )
-        return self._rows_to_findings(rows)
-
-    def _rows_to_findings(self, rows: list[tuple]) -> list[Finding]:
-        return [
-            Finding(id=r[0], connection_name=r[1], check_type=r[2], severity=r[3],
-                    schema_name=r[4], table_name=r[5], description=r[6],
-                    details=json.loads(r[7]) if r[7] else {},
-                    created_at=r[8] if len(r) > 8 and r[8] else "")
-            for r in rows
-        ]
-
-    # --- Dispositions ---
-
-    _DISPOSITION_COLS = ("id", "finding_id", "disposition", "comment", "created_at", "created_by")
-
-    def set_disposition(
-        self, finding_id: int, disposition: str,
-        comment: str = "", created_by: str = "",
-    ) -> int:
-        """Record a disposition change. Returns the disposition event ID."""
-        valid = {d.value for d in Disposition}
-        if disposition not in valid:
-            msg = f"Invalid disposition {disposition!r}, must be one of {valid}"
-            raise ValueError(msg)
-        now = datetime.now(timezone.utc).isoformat()
-        lastrowid = self._execute(
-            f"INSERT INTO {self._table('finding_dispositions')} "  # noqa: S608
-            "(finding_id, disposition, comment, created_at, created_by) "
-            "VALUES (:finding_id, :disposition, :comment, :created_at, :created_by)",
-            {"finding_id": finding_id, "disposition": disposition,
-             "comment": comment, "created_at": now, "created_by": created_by},
-        )
-        assert lastrowid is not None
-        return lastrowid
-
-    def get_current_dispositions(self, finding_ids: list[int]) -> dict[int, str]:
-        """Return {finding_id: disposition} for the latest disposition per finding."""
-        if not finding_ids:
-            return {}
-        ids_csv = ", ".join(str(fid) for fid in finding_ids)
-        t = self._table("finding_dispositions")
-        rows = self._query(
-            f"SELECT d.finding_id, d.disposition FROM {t} d "  # noqa: S608
-            f"INNER JOIN (SELECT finding_id, MAX(id) AS max_id FROM {t} "
-            f"WHERE finding_id IN ({ids_csv}) GROUP BY finding_id) "
-            "latest ON d.id = latest.max_id",
-        )
-        return {r[0]: r[1] for r in rows}
-
-    def get_disposition_history(self, finding_id: int) -> list[dict]:
-        """Return disposition change history for a finding, newest first."""
-        rows = self._query(
-            f"SELECT id, finding_id, disposition, comment, created_at, created_by "  # noqa: S608
-            f"FROM {self._table('finding_dispositions')} "
-            "WHERE finding_id = :finding_id ORDER BY id DESC",
-            {"finding_id": finding_id},
-        )
-        return [dict(zip(self._DISPOSITION_COLS, r)) for r in rows]
-
-    def get_latest_dbt_findings(self) -> list[DbtFinding]:
-        """Return dbt findings from the most recent check run only."""
-        row = self._query_one(
-            f"SELECT MAX(created_at) FROM {self._table('dbt_findings')}"
-        )
-        last_check = row[0] if row and row[0] else None
-        if not last_check:
-            return []
-        rows = self._query(
-            "SELECT resource_type, severity, unique_id, status, "
-            f"execution_time, description, details "  # noqa: S608
-            f"FROM {self._table('dbt_findings')} WHERE created_at = :created_at",
-            {"created_at": last_check},
-        )
-        return self._rows_to_dbt_findings(rows)
-
-    def get_dbt_findings_history(self, limit: int = 100) -> list[DbtFinding]:
-        rows = self._query(
-            "SELECT resource_type, severity, unique_id, status, "
-            f"execution_time, description, details "  # noqa: S608
-            f"FROM {self._table('dbt_findings')} ORDER BY created_at DESC LIMIT :limit",
-            {"limit": limit},
-        )
-        return self._rows_to_dbt_findings(rows)
-
-    def _rows_to_dbt_findings(self, rows: list[tuple]) -> list[DbtFinding]:
-        return [
-            DbtFinding(
-                resource_type=r[0],
-                severity=r[1],
-                unique_id=r[2],
-                status=r[3],
-                execution_time=r[4],
-                description=r[5],
-                details=json.loads(r[6]) if r[6] else {},
-            )
-            for r in rows
-        ]
 
 
 def open_state(
-    config: OllyConfig, adapter: Any = None
+    config: OllyConfig, adapter: Any = None,
+    *, create_tables: bool = False,
 ) -> BaseStateStore:
     """Create a state store based on configuration.
 
     When ``state_schema`` is set and an adapter is provided, state is stored
     in the warehouse. Otherwise falls back to local SQLite.
+
+    Pass ``create_tables=True`` to create the warehouse schema and tables
+    (used by ``olly init``).  Other commands expect the tables to exist.
     """
     if config.settings.state_schema and adapter is not None:
         from olly.state.warehouse import WarehouseStateStore
 
-        conn_type = ""
-        # Derive conn_type from adapter or config
-        for nc in config.connections.values():
-            if nc.connection.type:
-                conn_type = nc.connection.type
-                break
+        backend = adapter.backend
+        # Derive conn_type from the Ibis backend (e.g., "duckdb", "bigquery")
+        conn_type = getattr(backend, "name", "")
+        if not conn_type:
+            # Fallback: derive from config
+            for nc in config.connections.values():
+                if nc.connection.type:
+                    conn_type = nc.connection.type
+                    break
 
         return WarehouseStateStore(
-            adapter.backend, config.settings.state_schema, conn_type
+            backend, config.settings.state_schema, conn_type,
+            create_tables=create_tables,
         )
     from olly.state.sqlite import StateDB
 

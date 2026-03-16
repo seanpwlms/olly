@@ -34,6 +34,7 @@ export function RootLayout() {
     { to: "/contracts", label: "Contracts" },
     { to: "/integrity", label: "Integrity" },
     { to: "/usage", label: "Usage" },
+    { to: "/dbt", label: "dbt" },
   ] as const;
 
   return (

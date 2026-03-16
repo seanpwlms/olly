@@ -1,6 +1,6 @@
 # Olly
 
-Data quality framework that monitors data warehouses for schema changes, volume anomalies, freshness issues, cross-source integrity, and contract violations. Supports DuckDB, Postgres, BigQuery, and Snowflake via [Ibis](https://ibis-project.org/).
+Data quality framework that monitors data warehouses for schema changes, volume anomalies, freshness issues, cross-source integrity, cost spikes, usage staleness, and contract violations. Supports DuckDB, Postgres, BigQuery, and Snowflake via [Ibis](https://ibis-project.org/).
 
 By default, the schema checks are metadata-only, making it lightweight and low overhead.
 
@@ -39,6 +39,7 @@ That's it. Olly compares consecutive snapshots and reports schema changes and fr
 | **Integrity** | Row count or hash mismatches between source and target databases | error |
 | **Contracts** | Schema violations against declared Python contracts | error or warning |
 | **dbt** | Failures from `run_results.json` | error or warning |
+| **dbt perf** | dbt node execution time anomalies via EWMA over run history | warning |
 | **Usage** | Tables not queried within a lookback window (BigQuery only) | error or warning |
 | **Cost** | Query cost spikes detected via z-score anomaly detection (BigQuery only) | warning |
 
@@ -70,10 +71,10 @@ olly snapshot          Capture current warehouse state
 olly check             Run data quality checks
   --json               Machine-readable JSON output
   --verbose            Print detailed progress
-  --write-results      Persist findings to ~/.olly/<project-hash>/findings.json (default: true)
+  --write-results      Persist findings to ~/.olly/findings.json (default: true)
   --no-write-results   Disable writing findings to disk
   --connection NAME    Only check this connection
-olly config-explain    Show resolved config for each table
+olly plan              Show resolved config for each table
   --connection NAME    Only explain this connection
 olly unused            Show unused and stale tables
   --json               Machine-readable JSON output
@@ -83,6 +84,8 @@ olly debug             Test connectivity to the configured warehouse
   --connection NAME    Only test this connection
 olly clean             Delete the local state database
   --yes                Skip confirmation prompt
+olly create-state      Create warehouse state schema and tables
+  --connection NAME    Only create state for this connection
 olly serve             Start the web dashboard
   --host HOST          Bind address (default: 127.0.0.1)
   --port PORT          Port (default: 8000)
@@ -157,6 +160,7 @@ volume_method = "ewma"              # "ewma" (default) or "zscore"
 history_depth = 30                  # snapshots to keep for trend analysis
 min_history_for_anomaly = 5         # minimum snapshots before volume checks run
 write_results = true                # persist findings to ~/.olly/<project-hash>/findings.json
+state_schema = "olly_state"         # optional: store state in warehouse instead of local SQLite
 ```
 
 EWMA (Exponentially Weighted Moving Average) is the default volume method. It weights recent observations more heavily, making it better at handling trending tables without false positives. Use `"zscore"` for stationary tables where equal weighting of all history is preferred. Both methods can be overridden per table.
@@ -176,7 +180,7 @@ match = "main.*"
 freshness_column = "updated_at"
 ```
 
-Use `olly config-explain` to see how overrides resolve for each table.
+Use `olly plan` to see how overrides resolve for each table.
 
 ### Cross-connection integrity
 
@@ -263,6 +267,8 @@ Parse dbt's `run_results.json` to surface failures:
 ```toml
 [dbt]
 run_results_path = "target/run_results.json"
+performance_threshold = 3.0    # z-score threshold for execution time anomalies
+min_history_for_anomaly = 5    # minimum runs before performance checks activate
 ```
 
 ### Table usage monitoring
@@ -281,16 +287,18 @@ Tables with no queries in the lookback window are flagged as errors. Tables quer
 
 ### Query cost monitoring
 
-Track BigQuery query costs and detect spending spikes. Uses z-score anomaly detection over cost history from previous snapshots.
+Track BigQuery query costs and detect spending spikes. Uses z-score anomaly detection over cost history from previous snapshots. Cost fields live in the `[usage]` section:
 
 ```toml
-[cost]
+[usage]
 enabled = true
-lookback_days = 30          # days of query history to aggregate
-bigquery_region = "us"
+cost_enabled = true
+cost_lookback_days = 30      # days of query history to aggregate
 price_per_tb_usd = 6.25     # on-demand pricing rate
 spike_threshold = 3.0        # z-score threshold for cost spike alerts
 ```
+
+A legacy `[cost]` section is still accepted for backward compatibility, but new configs should use `[usage]`.
 
 When `olly check` runs, it shows a cost summary with top tables and top users by spend. Cost spikes are flagged as findings when the current period's total exceeds the historical mean by more than `spike_threshold` standard deviations.
 
@@ -312,7 +320,7 @@ When `olly check` produces qualifying findings, a summary is posted to the confi
 All functionality is available as importable Python modules:
 
 ```python
-from olly.cli.check import run_checks
+from olly.checker import run_checks
 from olly.cli.snapshot import take_snapshot
 from olly.config import (
     ConnectionConfig, NamedConnection, OllyConfig, Selection, Settings,
@@ -356,7 +364,7 @@ Olly uses a snapshot-and-diff model:
 
 3. Findings are printed to the terminal and optionally written to `~/.olly/<project-hash>/findings.json` for the dashboard or downstream tooling.
 
-State is fully local — Olly only reads from your warehouse and writes to the `~/.olly/<project-hash>/` directory.
+By default state is fully local — Olly only reads from your warehouse and writes to the `~/.olly/<project-hash>/` directory. Optionally, set `state_schema` in `[settings]` and run `olly create-state` to store state in your warehouse instead.
 
 ## Development
 

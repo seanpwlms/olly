@@ -8,7 +8,7 @@ from olly.models import CostRecord, Finding
 
 if TYPE_CHECKING:
     from olly.adapter import Adapter
-    from olly.config import CostConfig
+    from olly.config import UsageConfig
     from olly.state import BaseStateStore
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 def check_cost(
     adapter: Adapter,
     schemas: list[str],
-    cost_config: CostConfig,
+    usage_config: UsageConfig,
     state_db: BaseStateStore,
     connection_name: str = "",
 ) -> tuple[list[CostRecord], list[Finding]]:
@@ -26,7 +26,7 @@ def check_cost(
     Args:
         adapter: Warehouse adapter.
         schemas: Schema names to check costs for.
-        cost_config: Cost check configuration.
+        usage_config: Usage/cost configuration.
         state_db: State database for historical cost data.
 
     Returns:
@@ -36,16 +36,16 @@ def check_cost(
     try:
         records = adapter.fetch_query_costs(
             schemas=schemas,
-            lookback_days=cost_config.lookback_days,
-            region=cost_config.bigquery_region,
-            price_per_tb_usd=cost_config.price_per_tb_usd,
+            lookback_days=usage_config.cost_lookback_days,
+            region=usage_config.bigquery_region,
+            price_per_tb_usd=usage_config.price_per_tb_usd,
         )
     except Exception:
         logger.exception("Failed to fetch query costs")
         return [], []
 
     findings = _detect_cost_anomalies(
-        records, state_db, cost_config.spike_threshold, connection_name
+        records, state_db, usage_config.spike_threshold, connection_name
     )
 
     return records, findings

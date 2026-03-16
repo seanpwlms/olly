@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from olly.checks.cost import check_cost, summarize_costs, _detect_cost_anomalies
-from olly.config import ConnectionConfig, CostConfig, NamedConnection, OllyConfig, Selection
+from olly.config import ConnectionConfig, NamedConnection, OllyConfig, Selection, UsageConfig
 from olly.state import StateDB
 from conftest import make_cost_record, FakeAdapter
 
@@ -18,7 +18,7 @@ def test_check_cost_success(tmp_path):
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        records, findings = check_cost(cast(Any, adapter), ["main"], CostConfig(), db)
+        records, findings = check_cost(cast(Any, adapter), ["main"], UsageConfig(), db)
     assert records == expected
     assert findings == []
 
@@ -30,7 +30,7 @@ def test_check_cost_exception(tmp_path):
     state_path = tmp_path / "state.db"
     with StateDB(state_path) as db:
         db.init_db()
-        records, findings = check_cost(cast(Any, adapter), ["main"], CostConfig(), db)
+        records, findings = check_cost(cast(Any, adapter), ["main"], UsageConfig(), db)
     assert records == []
     assert findings == []
 
@@ -170,11 +170,11 @@ def test_config_parse_cost_section(tmp_path):
         "spike_threshold = 2.5\n"
     )
     config = load_config(config_path)
-    assert config.cost.enabled is True
-    assert config.cost.lookback_days == 14
-    assert config.cost.bigquery_region == "eu"
-    assert config.cost.price_per_tb_usd == 5.0
-    assert config.cost.spike_threshold == 2.5
+    assert config.usage.cost_enabled is True
+    assert config.usage.cost_lookback_days == 14
+    assert config.usage.bigquery_region == "eu"
+    assert config.usage.price_per_tb_usd == 5.0
+    assert config.usage.spike_threshold == 2.5
 
 
 def test_config_default_cost(tmp_path):
@@ -183,9 +183,9 @@ def test_config_default_cost(tmp_path):
     config_path = tmp_path / "olly.toml"
     config_path.write_text('[connection]\ntype = "duckdb"\npath = "test.db"\n')
     config = load_config(config_path)
-    assert config.cost.enabled is False
-    assert config.cost.lookback_days == 30
-    assert config.cost.price_per_tb_usd == 6.25
+    assert config.usage.cost_enabled is False
+    assert config.usage.cost_lookback_days == 30
+    assert config.usage.price_per_tb_usd == 6.25
 
 
 def test_config_write_cost(tmp_path):
@@ -198,15 +198,15 @@ def test_config_write_cost(tmp_path):
     )
     config = OllyConfig(
         connections={"primary": nc},
-        cost=CostConfig(enabled=True, lookback_days=7, bigquery_region="eu"),
+        usage=UsageConfig(cost_enabled=True, cost_lookback_days=7, bigquery_region="eu"),
     )
     path = tmp_path / "olly.toml"
     write_config(config, path)
 
     loaded = load_config(path)
-    assert loaded.cost.enabled is True
-    assert loaded.cost.lookback_days == 7
-    assert loaded.cost.bigquery_region == "eu"
+    assert loaded.usage.cost_enabled is True
+    assert loaded.usage.cost_lookback_days == 7
+    assert loaded.usage.bigquery_region == "eu"
 
 
 # --- BigQuery adapter tests ---

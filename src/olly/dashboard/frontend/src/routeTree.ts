@@ -25,7 +25,6 @@ export type FindingsSearch = {
   disposition?: string;
   q?: string;
   page?: number;
-  tab?: string;
   view?: string;
 };
 
@@ -65,7 +64,6 @@ export const findingsRoute = createRoute({
     disposition: (search.disposition as string) || undefined,
     q: (search.q as string) || undefined,
     page: Number(search.page) || undefined,
-    tab: (search.tab as string) || undefined,
     view: (search.view as string) || undefined,
   }),
 });

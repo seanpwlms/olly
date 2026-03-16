@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # ── Core model mirrors (from models.py dataclasses) ──
@@ -48,6 +48,7 @@ class DbtFindingModel(BaseModel):
     execution_time: float
     description: str
     details: dict = {}
+    dbt_run_id: int | None = None
 
 
 # ── From data.py dataclasses ──
@@ -121,6 +122,39 @@ class DbtStatsModel(BaseModel):
     warning_count: int
     pass_count: int
     total_count: int
+    total_execution_time: float = 0.0
+    total_failures: int = 0
+
+
+class DbtExecutionLeaderboardModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    unique_id: str
+    resource_type: str
+    execution_time: float
+    status: str
+    severity: str
+
+
+class DbtRunHistoryPointModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    created_at: str
+    elapsed_time: float
+    total_nodes: int
+    error_count: int
+    warning_count: int
+    pass_count: int
+
+
+class DbtNodeTimingModel(BaseModel):
+    timestamp: str
+    execution_time: float
+
+
+class DbtNodeTimingsResponse(BaseModel):
+    unique_id: str
+    timings: list[DbtNodeTimingModel]
 
 
 class UsageStatsModel(BaseModel):
@@ -207,7 +241,7 @@ class FindingsByConnection(BaseModel):
 
 
 class TableRowModel(BaseModel):
-    schema_: str
+    schema_: str = Field(serialization_alias="schema")
     table: str
     type: str
     columns: int
@@ -228,11 +262,6 @@ class TableRowModel(BaseModel):
             error_count=d["error_count"],
             warning_count=d["warning_count"],
         )
-
-    def model_dump(self, **kwargs) -> dict:
-        d = super().model_dump(**kwargs)
-        d["schema"] = d.pop("schema_")
-        return d
 
 
 class PrevStatsModel(BaseModel):
@@ -316,6 +345,8 @@ class DbtResponse(BaseModel):
     dbt_findings: list[DbtFindingModel]
     resource_types: list[str]
     severities: list[str]
+    execution_leaderboard: list[DbtExecutionLeaderboardModel] = []
+    run_history: list[DbtRunHistoryPointModel] = []
 
 
 class ContractsResponse(BaseModel):

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from olly.adapter import Adapter, connect_typed
+from olly.adapter import Adapter, ProgressCallback, connect_typed
 from olly.config import OllyConfig
 from olly.config_ops import (
     resolve_connections,
@@ -13,6 +13,7 @@ from olly.config_ops import (
     select_schema_names,
 )
 from olly.checks.dbt import check_dbt
+from olly.checks.dbt_perf import check_dbt_performance
 from olly.checks.freshness import check_freshness
 from olly.checks.integrity import load_syncs, run_syncs
 from olly.checks.schema import check_schema
@@ -21,7 +22,7 @@ from olly.checks.contracts import check_contracts
 from olly.checks.cost import check_cost
 from olly.checks.usage import check_usage
 from olly.contracts import load_contracts
-from olly.models import CostRecord, DbtFinding, Finding
+from olly.models import CostRecord, DbtFinding, DbtRunRecord, Finding
 from olly.state import open_state
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ def run_checks(
     config: OllyConfig,
     adapter: Adapter | None = None,
     connection_name: str | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> tuple[list[Finding], list[DbtFinding], list[CostRecord]]:
     """Run all enabled checks against the warehouse and return findings.
 
@@ -41,6 +43,8 @@ def run_checks(
         config: Parsed Olly configuration.
         adapter: Optional pre-built adapter (only used for single-connection).
         connection_name: Optional connection name to check.
+        on_progress: Optional callback invoked before each check step with
+            ``(connection_name, check_name)``.
 
     Returns:
         Tuple of (warehouse findings, dbt findings, cost records).
@@ -53,6 +57,8 @@ def run_checks(
 
     last_backend = None
     for name, nc in connections:
+        if on_progress:
+            on_progress(name, "connect")
         backend = adapter if adapter is not None else connect_typed(nc.connection)
         last_backend = backend
 
@@ -61,17 +67,24 @@ def run_checks(
         # Usage checks (independent of snapshots)
         if config.usage.enabled:
             logger.debug("[%s] Running usage checks", name)
-            usage_findings = check_usage(backend, schemas, config.usage)
+            if on_progress:
+                on_progress(name, "usage")
+            usage_findings = check_usage(
+                backend, schemas, config.usage,
+                all_tables=backend.list_tables(schemas),
+            )
             for f in usage_findings:
                 f.connection_name = name
             findings.extend(usage_findings)
 
         with open_state(config, backend) as state_db:
             # Cost checks (independent of snapshots)
-            if config.cost.enabled:
+            if config.usage.cost_enabled:
                 logger.debug("[%s] Running cost checks", name)
+                if on_progress:
+                    on_progress(name, "cost")
                 conn_cost_records, cost_findings = check_cost(
-                    backend, schemas, config.cost, state_db, connection_name=name
+                    backend, schemas, config.usage, state_db, connection_name=name
                 )
                 for f in cost_findings:
                     f.connection_name = name
@@ -94,6 +107,8 @@ def run_checks(
 
             # Schema checks
             logger.debug("[%s] Running schema checks", name)
+            if on_progress:
+                on_progress(name, "schema")
             schema_findings = check_schema(latest_tables, baseline_tables)
             for f in schema_findings:
                 f.connection_name = name
@@ -101,6 +116,8 @@ def run_checks(
 
             logger.debug("[%s] Running contract checks", name)
             if config.contracts.module:
+                if on_progress:
+                    on_progress(name, "contracts")
                 config_path = config.config_path or Path("olly.toml")
                 all_contracts = load_contracts(config.contracts.module, config_path)
                 contracts = [
@@ -115,6 +132,8 @@ def run_checks(
 
             # Volume checks
             logger.debug("[%s] Running volume checks", name)
+            if on_progress:
+                on_progress(name, "volume")
             overrides_map = {
                 (t.schema_name, t.table_name): resolve_table_settings_with_sources(
                     config.settings, nc.overrides, t.schema_name, t.table_name
@@ -140,6 +159,8 @@ def run_checks(
 
             # Freshness checks
             logger.debug("[%s] Running freshness checks", name)
+            if on_progress:
+                on_progress(name, "freshness")
             freshness_findings = check_freshness(
                 backend, latest_tables, config.settings, overrides_map, state_db,
                 connection_name=name,
@@ -151,30 +172,52 @@ def run_checks(
     # Integrity checks (global, not per-connection)
     logger.debug("Running integrity checks")
     if config.integrity.module:
+        if on_progress:
+            on_progress("", "integrity")
         config_path = config.config_path or Path("olly.toml")
         syncs = load_syncs(config.integrity.module, config_path)
         findings.extend(run_syncs(syncs, connections=config.connections))
 
     # dbt checks (global)
     logger.debug("Running dbt checks")
-    dbt_findings = _run_dbt_checks(config)
+    if on_progress:
+        on_progress("", "dbt")
+    dbt_findings, dbt_run = _run_dbt_checks(config)
 
     # Store all findings in the correct state store (warehouse or SQLite)
-    if findings or dbt_findings:
+    if findings or dbt_findings or dbt_run:
+        if on_progress:
+            on_progress("", "saving")
         with open_state(config, last_backend) as state_db:
             state_db.store_findings(findings)
-            state_db.store_dbt_findings(dbt_findings)
+            if dbt_run:
+                run_id = state_db.store_dbt_run(dbt_run)
+                state_db.store_dbt_findings(dbt_findings, dbt_run_id=run_id)
+                state_db.store_dbt_node_timings(run_id, dbt_findings)
+                # Per-model performance anomaly detection
+                perf_findings = check_dbt_performance(
+                    dbt_findings, state_db,
+                    threshold=config.dbt.performance_threshold,
+                    min_history=config.dbt.min_history_for_anomaly,
+                )
+                dbt_findings.extend(perf_findings)
+                if perf_findings:
+                    state_db.store_dbt_findings(perf_findings, dbt_run_id=run_id)
+            else:
+                state_db.store_dbt_findings(dbt_findings)
 
     total = len(findings) + len(dbt_findings)
     logger.info("Checks complete: %d findings", total)
     return findings, dbt_findings, cost_records
 
 
-def _run_dbt_checks(config: OllyConfig) -> list[DbtFinding]:
+def _run_dbt_checks(
+    config: OllyConfig,
+) -> tuple[list[DbtFinding], DbtRunRecord | None]:
     """Run dbt checks if configured."""
     if not config.dbt.run_results_path:
         logger.info("No dbt.run_results_path configured, skipping dbt checks")
-        return []
+        return [], None
     run_results_path = Path(config.dbt.run_results_path)
     if not run_results_path.is_absolute() and config.config_path is not None:
         run_results_path = config.config_path.parent / run_results_path

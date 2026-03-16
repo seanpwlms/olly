@@ -1,4 +1,4 @@
-import { useParams, Link } from "@tanstack/react-router";
+import { useParams } from "@tanstack/react-router";
 import { useConnection } from "../hooks/useConnection";
 import { useTableDetail } from "../hooks/queries";
 import { StatCard } from "../components/StatCard";
@@ -121,11 +121,6 @@ export function TableDetailPage() {
 
   return (
     <>
-      <p className="mb-2">
-        <Link to="/" className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline text-sm">
-          &larr; Back to dashboard
-        </Link>
-      </p>
       <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">
         {schema}.{table}
       </h1>

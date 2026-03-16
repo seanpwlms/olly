@@ -98,21 +98,29 @@ class DbtConfig:
 
     run_results_path: str | None = None
     include_skipped: bool = False
+    performance_threshold: float = 3.0
+    min_history_for_anomaly: int = 5
 
 
 @dataclass
 class UsageConfig:
-    """Configuration for table usage/staleness monitoring."""
+    """Configuration for table usage/staleness and cost monitoring."""
 
     enabled: bool = False
     lookback_days: int = 90
     unused_threshold_days: int = 30
     bigquery_region: str = "us"
+    # Cost monitoring fields (formerly [cost] section)
+    severity: str = "warning"
+    cost_enabled: bool = False
+    cost_lookback_days: int = 30
+    price_per_tb_usd: float = 6.25
+    spike_threshold: float = 3.0
 
 
 @dataclass
 class CostConfig:
-    """Configuration for BigQuery query cost monitoring."""
+    """Deprecated: use UsageConfig cost fields instead."""
 
     enabled: bool = False
     lookback_days: int = 30
@@ -150,7 +158,6 @@ class OllyConfig:
     contracts: ContractsConfig = field(default_factory=ContractsConfig)
     dbt: DbtConfig = field(default_factory=DbtConfig)
     usage: UsageConfig = field(default_factory=UsageConfig)
-    cost: CostConfig = field(default_factory=CostConfig)
     slack: SlackConfig = field(default_factory=SlackConfig)
     config_path: Path | None = None
 
@@ -307,20 +314,30 @@ def load_config(path: Path | None = None) -> OllyConfig:
     )
 
     usage_raw = raw.get("usage", {})
+    cost_raw = raw.get("cost", {})
+    if cost_raw:
+        logger.warning(
+            "Deprecated: [cost] config section. "
+            "Move cost settings into [usage] instead."
+        )
     usage = UsageConfig(
         enabled=usage_raw.get("enabled", False),
         lookback_days=usage_raw.get("lookback_days", 90),
         unused_threshold_days=usage_raw.get("unused_threshold_days", 30),
-        bigquery_region=usage_raw.get("bigquery_region", "us"),
-    )
-
-    cost_raw = raw.get("cost", {})
-    cost = CostConfig(
-        enabled=cost_raw.get("enabled", False),
-        lookback_days=cost_raw.get("lookback_days", 30),
-        bigquery_region=cost_raw.get("bigquery_region", "us"),
-        price_per_tb_usd=cost_raw.get("price_per_tb_usd", 6.25),
-        spike_threshold=cost_raw.get("spike_threshold", 3.0),
+        bigquery_region=usage_raw.get(
+            "bigquery_region", cost_raw.get("bigquery_region", "us")
+        ),
+        cost_enabled=usage_raw.get("cost_enabled", cost_raw.get("enabled", False)),
+        cost_lookback_days=usage_raw.get(
+            "cost_lookback_days", cost_raw.get("lookback_days", 30)
+        ),
+        price_per_tb_usd=usage_raw.get(
+            "price_per_tb_usd", cost_raw.get("price_per_tb_usd", 6.25)
+        ),
+        spike_threshold=usage_raw.get(
+            "spike_threshold", cost_raw.get("spike_threshold", 3.0)
+        ),
+        severity=usage_raw.get("severity", "warning"),
     )
 
     slack_raw = raw.get("slack", {})
@@ -337,7 +354,6 @@ def load_config(path: Path | None = None) -> OllyConfig:
         contracts=contracts,
         dbt=dbt,
         usage=usage,
-        cost=cost,
         slack=slack,
         config_path=path,
     )
@@ -470,10 +486,8 @@ def _config_to_dict(config: OllyConfig) -> dict:
         if config.dbt.include_skipped:
             dbt_data["include_skipped"] = config.dbt.include_skipped
         data["dbt"] = dbt_data
-    if config.usage.enabled:
+    if config.usage.enabled or config.usage.cost_enabled:
         data["usage"] = asdict(config.usage)
-    if config.cost.enabled:
-        data["cost"] = asdict(config.cost)
     if config.slack.webhook_url:
         data["slack"] = _strip_none(asdict(config.slack))
 

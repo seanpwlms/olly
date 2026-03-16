@@ -17,16 +17,20 @@ def check_usage(
     adapter: Adapter,
     schemas: list[str],
     usage_config: UsageConfig,
+    all_tables: list[tuple[str, str]] | None = None,
 ) -> list[Finding]:
     """Identify tables that haven't been queried in the configured period.
 
     Uses warehouse query history (e.g. BigQuery INFORMATION_SCHEMA.JOBS_BY_PROJECT)
-    to detect tables with no recent access.
+    to detect tables with no recent access. Tables that don't appear in query
+    history at all are also flagged as unused.
 
     Args:
         adapter: Warehouse adapter.
         schemas: Schema names to check usage for.
         usage_config: Usage check configuration.
+        all_tables: Optional list of all (schema, table) pairs to cross-reference.
+            Tables absent from query history are flagged as unused.
 
     Returns:
         Findings for unused or stale tables.
@@ -44,13 +48,19 @@ def check_usage(
     findings: list[Finding] = []
     now = datetime.now(timezone.utc)
     threshold_days = usage_config.unused_threshold_days
+    severity = usage_config.severity
+
+    # Track which tables appear in query history
+    seen_tables: set[tuple[str, str]] = set()
 
     for record in usage_records:
+        seen_tables.add((record.schema_name, record.table_name))
+
         if record.last_queried_at is None:
             findings.append(
                 Finding(
                     check_type="usage",
-                    severity="error",
+                    severity=severity,
                     schema_name=record.schema_name,
                     table_name=record.table_name,
                     description=(
@@ -73,7 +83,6 @@ def check_usage(
         days_unused = (now - last_queried).total_seconds() / 86400
 
         if days_unused > threshold_days:
-            severity = "warning" if days_unused < threshold_days * 2 else "error"
             findings.append(
                 Finding(
                     check_type="usage",
@@ -93,5 +102,27 @@ def check_usage(
                     },
                 )
             )
+
+    # Flag tables completely absent from query history
+    if all_tables:
+        for schema_name, table_name in sorted(all_tables):
+            if (schema_name, table_name) not in seen_tables:
+                findings.append(
+                    Finding(
+                        check_type="usage",
+                        severity=severity,
+                        schema_name=schema_name,
+                        table_name=table_name,
+                        description=(
+                            f"Unused table: {schema_name}.{table_name}"
+                            f" — no queries in past {usage_config.lookback_days} days"
+                        ),
+                        details={
+                            "last_queried_at": None,
+                            "lookback_days": usage_config.lookback_days,
+                            "threshold_days": threshold_days,
+                        },
+                    )
+                )
 
     return findings

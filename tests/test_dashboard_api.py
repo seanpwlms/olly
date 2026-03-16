@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from olly.models import CostRecord, Finding
-from olly.results import write_findings_json
-from olly.state import StateDB, get_olly_dir
+from olly.state import StateDB
 from helpers import patch_dashboard
 
 
@@ -102,6 +101,61 @@ def test_api_dbt(dashboard_client):
     data = resp.json()
     assert "dbt_stats" in data
     assert "dbt_findings" in data
+    assert "execution_leaderboard" in data
+    assert "run_history" in data
+    assert "total_execution_time" in data["dbt_stats"]
+    assert "total_failures" in data["dbt_stats"]
+
+
+def test_api_dbt_previous_sql(tmp_path, monkeypatch):
+    """GET /dbt/node/{unique_id}/previous-sql returns previous compiled code."""
+    from olly.models import DbtFinding, DbtRunRecord
+
+    state_db_path = tmp_path / ".olly" / "state.db"
+    state_db_path.parent.mkdir(parents=True)
+    state_db = StateDB(db_path=state_db_path)
+    state_db.init_db()
+
+    run1 = state_db.store_dbt_run(DbtRunRecord("inv-1", 10.0, 1, 0, 0, 1))
+    state_db.store_dbt_findings([
+        DbtFinding("model", "pass", "model.p.orders", "success", 5.0, "ok",
+                   details={"compiled_code": "SELECT 1"}),
+    ], dbt_run_id=run1)
+
+    run2 = state_db.store_dbt_run(DbtRunRecord("inv-2", 10.0, 1, 0, 0, 1))
+    state_db.store_dbt_findings([
+        DbtFinding("model", "pass", "model.p.orders", "success", 5.0, "ok",
+                   details={"compiled_code": "SELECT 2"}),
+    ], dbt_run_id=run2)
+    state_db.close()
+
+    client = patch_dashboard(monkeypatch, state_db_path, tmp_path)
+    resp = client.get(f"/api/dbt/node/model.p.orders/previous-sql?dbt_run_id={run2}")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["previous_sql"] == "SELECT 1"
+
+
+def test_api_dbt_previous_sql_no_history(tmp_path, monkeypatch):
+    """Returns null when no previous run exists."""
+    from olly.models import DbtFinding, DbtRunRecord
+
+    state_db_path = tmp_path / ".olly" / "state.db"
+    state_db_path.parent.mkdir(parents=True)
+    state_db = StateDB(db_path=state_db_path)
+    state_db.init_db()
+
+    run1 = state_db.store_dbt_run(DbtRunRecord("inv-1", 10.0, 1, 0, 0, 1))
+    state_db.store_dbt_findings([
+        DbtFinding("model", "pass", "model.p.orders", "success", 5.0, "ok",
+                   details={"compiled_code": "SELECT 1"}),
+    ], dbt_run_id=run1)
+    state_db.close()
+
+    client = patch_dashboard(monkeypatch, state_db_path, tmp_path)
+    resp = client.get(f"/api/dbt/node/model.p.orders/previous-sql?dbt_run_id={run1}")
+    assert resp.status_code == 200
+    assert resp.json()["previous_sql"] is None
 
 
 def test_api_usage_empty(dashboard_client):
@@ -114,7 +168,7 @@ def test_api_usage_empty(dashboard_client):
 
 def test_api_usage_with_findings(tmp_path, monkeypatch):
     """Usage API with usage findings and cost data."""
-    state_db_path = get_olly_dir(tmp_path) / "state.db"
+    state_db_path = tmp_path / ".olly" / "state.db"
     state_db_path.parent.mkdir(parents=True)
     state_db = StateDB(db_path=state_db_path)
     state_db.init_db()
@@ -130,14 +184,12 @@ def test_api_usage_with_findings(tmp_path, monkeypatch):
         ),
     ]
     state_db.store_findings(usage_findings)
-    state_db.close()
-
-    findings_path = get_olly_dir(tmp_path) / "findings.json"
     cost_records = [
         CostRecord("main", "orders", "alice@co.com", 5000000, 25.00, 10),
         CostRecord("main", "users", "bob@co.com", 2000000, 8.50, 3),
     ]
-    write_findings_json(usage_findings, findings_path, cost_records=cost_records)
+    state_db.store_cost_data(cost_records)
+    state_db.close()
 
     client = patch_dashboard(monkeypatch, state_db_path, tmp_path)
     resp = client.get("/api/usage")

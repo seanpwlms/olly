@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 
 from olly.config import DbtConfig
-from olly.models import DbtFinding
+from olly.models import DbtFinding, DbtRunRecord
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 def check_dbt(
     run_results_path: Path,
     settings: DbtConfig,
-) -> list[DbtFinding]:
+) -> tuple[list[DbtFinding], DbtRunRecord | None]:
     """Check a dbt run_results.json artifact for errors and failures.
 
     Args:
@@ -21,12 +21,11 @@ def check_dbt(
         settings: dbt check configuration (thresholds, skipped handling).
 
     Returns:
-        List of ``DbtFinding`` instances. Empty if the file is missing or
-        no issues are detected.
+        Tuple of (list of findings, run record or None if file missing).
     """
     if not run_results_path.exists():
         logger.warning("dbt run_results.json not found at %s", run_results_path)
-        return []
+        return [], None
 
     logger.info("Found dbt run_results.json at %s", run_results_path)
 
@@ -34,6 +33,7 @@ def check_dbt(
         data = json.load(f)
 
     invocation_id = data.get("metadata", {}).get("invocation_id", "")
+    elapsed_time = data.get("elapsed_time", 0.0) or 0.0
     results = data.get("results", [])
     logger.info("dbt run_results.json contains %d result(s)", len(results))
     findings: list[DbtFinding] = []
@@ -49,6 +49,9 @@ def check_dbt(
             result.get("compiled_code") or result.get("compiled_sql") or ""
         )
 
+        failures = result.get("failures")
+        adapter_response: dict = result.get("adapter_response", {}) or {}
+
         details = {
             "unique_id": unique_id,
             "resource_type": resource_type,
@@ -56,6 +59,8 @@ def check_dbt(
             "execution_time": execution_time,
             "invocation_id": invocation_id,
             "compiled_code": compiled_code,
+            "failures": failures,
+            "adapter_response": adapter_response,
         }
 
         # Model/snapshot errors
@@ -113,7 +118,7 @@ def check_dbt(
                         unique_id=unique_id,
                         status=status,
                         execution_time=execution_time,
-                        description=f"dbt node skipped: {unique_id}",
+                        description=message or f"dbt node skipped: {unique_id}",
                         details=details,
                     )
                 )
@@ -132,5 +137,48 @@ def check_dbt(
             )
         )
 
+    # Detect cascade groups: skipped nodes whose message references an errored model
+    _detect_cascades(findings)
+
+    # Build run record
+    error_count = sum(1 for f in findings if f.severity == "error")
+    warning_count = sum(1 for f in findings if f.severity == "warning")
+    pass_count = sum(1 for f in findings if f.severity == "pass")
+    run_record = DbtRunRecord(
+        invocation_id=invocation_id,
+        elapsed_time=elapsed_time,
+        total_nodes=len(results),
+        error_count=error_count,
+        warning_count=warning_count,
+        pass_count=pass_count,
+    )
+
     logger.info("dbt check complete: %d finding(s) from %d result(s)", len(findings), len(results))
-    return findings
+    return findings, run_record
+
+
+def _detect_cascades(findings: list[DbtFinding]) -> None:
+    """Annotate findings with cascade group info in-place.
+
+    Looks for skipped/error findings whose message references an errored model.
+    Adds ``cascade_root`` to downstream findings' details.
+    """
+    # Collect errored model names (short name, e.g. "orders" from "model.project.orders")
+    error_nodes: dict[str, str] = {}
+    for f in findings:
+        if f.severity == "error" and f.resource_type in ("model", "snapshot"):
+            parts = f.unique_id.split(".")
+            short_name = parts[-1] if parts else f.unique_id
+            error_nodes[short_name] = f.unique_id
+
+    if not error_nodes:
+        return
+
+    for f in findings:
+        if f.unique_id in error_nodes.values():
+            continue
+        desc_lower = f.description.lower()
+        for short_name, full_id in error_nodes.items():
+            if short_name.lower() in desc_lower:
+                f.details["cascade_root"] = full_id
+                break

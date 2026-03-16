@@ -10,6 +10,8 @@ import type {
   TableDetailResponse,
   UsageResponse,
   DbtResponse,
+  DbtNodeTimingsResponse,
+  DbtPreviousSqlResponse,
   DispositionHistoryResponse,
 } from "../types";
 
@@ -99,6 +101,29 @@ export function useDbt(connection: string) {
   return useQuery({
     queryKey: ["dbt", connection],
     queryFn: () => fetchApi<DbtResponse>("/api/dbt", { connection }),
+  });
+}
+
+export function useDbtPreviousSql(uniqueId: string | null, dbtRunId: number | null) {
+  return useQuery({
+    queryKey: ["dbtPreviousSql", uniqueId, dbtRunId],
+    queryFn: () =>
+      fetchApi<DbtPreviousSqlResponse>(
+        `/api/dbt/node/${encodeURIComponent(uniqueId!)}/previous-sql`,
+        dbtRunId ? { dbt_run_id: String(dbtRunId) } : {},
+      ),
+    enabled: uniqueId !== null,
+  });
+}
+
+export function useDbtNodeTimings(uniqueId: string | null) {
+  return useQuery({
+    queryKey: ["dbtNodeTimings", uniqueId],
+    queryFn: () =>
+      fetchApi<DbtNodeTimingsResponse>(
+        `/api/dbt/node/${encodeURIComponent(uniqueId!)}/timings`,
+      ),
+    enabled: uniqueId !== null,
   });
 }
 

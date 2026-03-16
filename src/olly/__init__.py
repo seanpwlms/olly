@@ -14,7 +14,7 @@ def init() -> None:
     """Run the interactive setup wizard.
 
     Creates an ``olly.toml`` config file and initializes the state
-    database in ``~/.olly/<project-hash>/``.
+    database in ``~/.olly/``.
     """
     from olly.cli.init import run_init
 
@@ -68,19 +68,19 @@ def check(
 
 
 @app.command
-def config_explain(*, connection: str | None = None) -> None:
-    """Explain which schemas/tables are selected and how overrides resolve.
+def plan(*, connection: str | None = None) -> None:
+    """Show the resolved plan for each table.
 
     Loads the current config and warehouse state, then prints a summary
     showing which schemas and tables match the selection filters and how
     per-table settings are resolved through the override chain.
 
     Args:
-        connection: Name of a specific connection to explain.
+        connection: Name of a specific connection to show.
     """
-    from olly.cli.config_explain import run_config_explain
+    from olly.cli.plan import run_plan
 
-    run_config_explain(connection_name=connection)
+    run_plan(connection_name=connection)
 
 
 @app.command
@@ -108,6 +108,21 @@ def serve(*, host: str = "127.0.0.1", port: int = 8000) -> None:
     from olly.cli.serve import run_serve
 
     run_serve(host=host, port=port)
+
+
+@app.command(name="create-state")
+def create_state(*, connection: str | None = None) -> None:
+    """Create the warehouse state schema and tables.
+
+    Reads the current config, lists the objects that will be created,
+    and prompts for confirmation before executing DDL.
+
+    Args:
+        connection: Name of a specific connection to use for state storage.
+    """
+    from olly.cli.create_state import run_create_state
+
+    run_create_state(connection_name=connection)
 
 
 @app.command
