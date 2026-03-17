@@ -6,6 +6,7 @@ import logging
 import time
 from typing import Any
 
+from olly.logging import timed_raw_sql
 from olly.state.base import BaseStateStore
 
 logger = logging.getLogger(__name__)
@@ -54,8 +55,16 @@ _DIALECTS: dict[str, dict[str, Any]] = {
 _id_counter = 0
 
 
-def _escape(value: str) -> str:
-    """Escape a string value for SQL literal inclusion."""
+def _escape(value: str, *, backslash: bool = False) -> str:
+    """Escape a string value for SQL literal inclusion.
+
+    BigQuery does not treat ``''`` as an escaped single quote; it sees
+    two adjacent string literals that get implicitly concatenated.  Use
+    backslash escaping (``\\'``) for BigQuery, standard doubling for
+    other dialects.
+    """
+    if backslash:
+        return value.replace("\\", "\\\\").replace("'", "\\'")
     return value.replace("'", "''")
 
 
@@ -105,8 +114,12 @@ class WarehouseStateStore(BaseStateStore):
     def _table(self, name: str) -> str:
         return f"{self._quote(self._schema)}.{self._quote(name)}"
 
+    def _esc(self, value: str) -> str:
+        """Escape a string literal using the correct strategy for this dialect."""
+        return _escape(value, backslash=self._conn_type == "bigquery")
+
     def _exec(self, sql: str) -> Any:
-        return self._conn.raw_sql(sql)
+        return timed_raw_sql(self._conn, sql)
 
     def _fetchall(self, result: Any) -> list[tuple]:
         """Convert a query result to a list of tuples.
@@ -130,13 +143,12 @@ class WarehouseStateStore(BaseStateStore):
         # Warehouse doesn't support lastrowid; use _next_id for snapshots
         return None
 
-    @staticmethod
-    def _format_row(row: tuple) -> str:
+    def _format_row(self, row: tuple) -> str:
         """Format a single row tuple as a SQL VALUES literal."""
         parts = []
         for val in row:
             if isinstance(val, str):
-                parts.append(f"'{_escape(val)}'")
+                parts.append(f"'{self._esc(val)}'")
             elif isinstance(val, bool):
                 parts.append("1" if val else "0")
             elif val is None:
@@ -169,7 +181,7 @@ class WarehouseStateStore(BaseStateStore):
             name = m.group(1)
             val = params[name]
             if isinstance(val, str):
-                return f"'{_escape(val)}'"
+                return f"'{self._esc(val)}'"
             if isinstance(val, bool):
                 return "1" if val else "0"
             if val is None:
@@ -204,7 +216,7 @@ class WarehouseStateStore(BaseStateStore):
         new_id = self._generate_id()
         self._exec(
             f"INSERT INTO {self._table('snapshots')} (id, created_at, connection_name) "
-            f"VALUES ({new_id}, '{_escape(now)}', '{_escape(connection_name)}')"
+            f"VALUES ({new_id}, '{self._esc(now)}', '{self._esc(connection_name)}')"
         )
         logger.debug("Created warehouse snapshot #%d", new_id)
         return new_id
@@ -219,12 +231,12 @@ class WarehouseStateStore(BaseStateStore):
         finding_id = self._generate_id()
         all_values = []
         for f in findings:
-            details_json = json.dumps(f.details).replace("'", "''")
+            details_json = self._esc(json.dumps(f.details))
             all_values.append(
-                f"({finding_id}, '{_escape(now)}', '{_escape(f.connection_name)}', "
-                f"'{_escape(f.check_type)}', '{_escape(f.severity)}', "
-                f"'{_escape(f.schema_name)}', '{_escape(f.table_name)}', "
-                f"'{_escape(f.description)}', '{details_json}')"
+                f"({finding_id}, '{self._esc(now)}', '{self._esc(f.connection_name)}', "
+                f"'{self._esc(f.check_type)}', '{self._esc(f.severity)}', "
+                f"'{self._esc(f.schema_name)}', '{self._esc(f.table_name)}', "
+                f"'{self._esc(f.description)}', '{details_json}')"
             )
             finding_id += 1
         prefix = (
@@ -250,12 +262,12 @@ class WarehouseStateStore(BaseStateStore):
         run_id_sql = str(dbt_run_id) if dbt_run_id is not None else "NULL"
         all_values = []
         for f in dbt_findings:
-            details_json = json.dumps(f.details).replace("'", "''")
+            details_json = self._esc(json.dumps(f.details))
             all_values.append(
-                f"({finding_id}, '{_escape(now)}', '{_escape(f.resource_type)}', "
-                f"'{_escape(f.severity)}', '{_escape(f.unique_id)}', "
-                f"'{_escape(f.status)}', {f.execution_time}, "
-                f"'{_escape(f.description)}', '{details_json}', {run_id_sql})"
+                f"({finding_id}, '{self._esc(now)}', '{self._esc(f.resource_type)}', "
+                f"'{self._esc(f.severity)}', '{self._esc(f.unique_id)}', "
+                f"'{self._esc(f.status)}', {f.execution_time}, "
+                f"'{self._esc(f.description)}', '{details_json}', {run_id_sql})"
             )
             finding_id += 1
         prefix = (
@@ -436,7 +448,7 @@ class WarehouseStateStore(BaseStateStore):
         new_id = self._generate_id()
         self._exec(
             f"INSERT INTO {self._table('cost_runs')} (id, created_at, connection_name) "
-            f"VALUES ({new_id}, '{_escape(now)}', '{_escape(connection_name)}')"
+            f"VALUES ({new_id}, '{self._esc(now)}', '{self._esc(connection_name)}')"
         )
         return new_id
 
@@ -458,8 +470,8 @@ class WarehouseStateStore(BaseStateStore):
         self._exec(
             f"INSERT INTO {self._table('finding_dispositions')} "
             f"(id, finding_id, disposition, comment, created_at, created_by) "
-            f"VALUES ({new_id}, {finding_id}, '{_escape(disposition)}', "
-            f"'{_escape(comment)}', '{_escape(now)}', '{_escape(created_by)}')"
+            f"VALUES ({new_id}, {finding_id}, '{self._esc(disposition)}', "
+            f"'{self._esc(comment)}', '{self._esc(now)}', '{self._esc(created_by)}')"
         )
         return new_id
 
@@ -472,7 +484,7 @@ class WarehouseStateStore(BaseStateStore):
             f"INSERT INTO {self._table('dbt_runs')} "
             f"(id, created_at, invocation_id, elapsed_time, total_nodes, "
             f"error_count, warning_count, pass_count) "
-            f"VALUES ({new_id}, '{_escape(now)}', '{_escape(run_record.invocation_id)}', "
+            f"VALUES ({new_id}, '{self._esc(now)}', '{self._esc(run_record.invocation_id)}', "
             f"{run_record.elapsed_time}, {run_record.total_nodes}, "
             f"{run_record.error_count}, {run_record.warning_count}, {run_record.pass_count})"
         )

@@ -10,7 +10,7 @@ from olly.adapter import connect_typed
 from olly.checks.usage import check_usage
 from olly.config import load_config
 from olly.config_ops import resolve_connections, select_schema_names
-from olly.logging import setup_logging
+from olly.logging import setup_logging, setup_query_logging
 from olly.cli.check import print_findings_table
 from olly.models import Finding
 
@@ -36,6 +36,8 @@ def run_unused(
     """
     setup_logging(verbose)
     config = load_config()
+    if config.settings.log_queries:
+        setup_query_logging()
 
     all_findings: list[Finding] = []
     connections = resolve_connections(config, connection_name)

@@ -78,7 +78,7 @@ class PostgresAdapter(BaseAdapter):
         )
 
         try:
-            result = self._conn.raw_sql(sql)
+            result = self._raw_sql(sql)
             rows = result.fetchall()
         except Exception as exc:
             err_msg = str(exc)

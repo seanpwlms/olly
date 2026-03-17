@@ -65,7 +65,7 @@ class SnowflakeAdapter(BaseAdapter):
         database's ``INFORMATION_SCHEMA.SCHEMATA``.
         """
         if self._use_account_usage:
-            result = self._conn.raw_sql(
+            result = self._raw_sql(
                 "SELECT CATALOG_NAME, SCHEMA_NAME "
                 "FROM SNOWFLAKE.ACCOUNT_USAGE.SCHEMATA "
                 "WHERE DELETED IS NULL"
@@ -73,12 +73,12 @@ class SnowflakeAdapter(BaseAdapter):
             rows = result.fetchall()
             return [f"{row[0]}.{row[1]}" for row in rows]
 
-        result = self._conn.raw_sql("SHOW DATABASES")
+        result = self._raw_sql("SHOW DATABASES")
         databases = [row[1] for row in result.fetchall()]
         schemas: list[str] = []
         for db in databases:
             try:
-                result = self._conn.raw_sql(
+                result = self._raw_sql(
                     f'SELECT SCHEMA_NAME FROM "{db}".INFORMATION_SCHEMA.SCHEMATA'
                 )
                 for row in result.fetchall():
@@ -139,7 +139,7 @@ class SnowflakeAdapter(BaseAdapter):
         safe_db = database.replace("'", "''")
         safe_db_ident = database.replace('"', '""')
         if self._use_account_usage:
-            result = self._conn.raw_sql(
+            result = self._raw_sql(
                 "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
                 "FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES "
                 f"WHERE TABLE_CATALOG = '{safe_db}' "
@@ -147,7 +147,7 @@ class SnowflakeAdapter(BaseAdapter):
                 "AND DELETED IS NULL"
             )
         else:
-            result = self._conn.raw_sql(
+            result = self._raw_sql(
                 "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
                 f'FROM "{safe_db_ident}".INFORMATION_SCHEMA.TABLES '
                 f"WHERE TABLE_SCHEMA IN ({schema_filter})"
@@ -175,7 +175,7 @@ class SnowflakeAdapter(BaseAdapter):
         safe_db_ident = database.replace('"', '""')
 
         if self._use_account_usage:
-            result = self._conn.raw_sql(
+            result = self._raw_sql(
                 "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, "
                 "COLUMN_NAME, DATA_TYPE, IS_NULLABLE "
                 "FROM SNOWFLAKE.ACCOUNT_USAGE.COLUMNS "
@@ -185,7 +185,7 @@ class SnowflakeAdapter(BaseAdapter):
                 "ORDER BY TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION"
             )
         else:
-            result = self._conn.raw_sql(
+            result = self._raw_sql(
                 "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, "
                 "COLUMN_NAME, DATA_TYPE, IS_NULLABLE "
                 f'FROM "{safe_db_ident}".INFORMATION_SCHEMA.COLUMNS '
@@ -239,7 +239,7 @@ class SnowflakeAdapter(BaseAdapter):
                     f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schema_list
                 )
                 safe_db = database.replace("'", "''")
-                result = self._conn.raw_sql(
+                result = self._raw_sql(
                     "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ROW_COUNT "
                     "FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES "
                     f"WHERE TABLE_CATALOG = '{safe_db}' "
@@ -271,7 +271,7 @@ class SnowflakeAdapter(BaseAdapter):
                 try:
                     table = self._format_table(ti.schema_name, ti.table_name)
                     sql = f"SELECT COUNT(*) FROM {table}"
-                    result = self._conn.raw_sql(sql)
+                    result = self._raw_sql(sql)
                     row = result.fetchone()
                     count = int(row[0]) if row and row[0] is not None else 0
                     records.append(
@@ -306,7 +306,7 @@ class SnowflakeAdapter(BaseAdapter):
         table = self._format_table(schema_name, table_name)
         sql = f"SELECT MAX({col}) FROM {table}"
         try:
-            result = self._conn.raw_sql(sql)
+            result = self._raw_sql(sql)
             row = result.fetchone()
             if not row or row[0] is None:
                 return None

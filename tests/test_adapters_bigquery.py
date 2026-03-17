@@ -132,6 +132,7 @@ def _make_adapter(
     )
     adapter._use_information_schema_row_counts = use_info_schema_row_counts
     adapter._region = region
+    adapter._metadata_cache = {}
     return adapter
 
 
@@ -153,6 +154,7 @@ def _make_error_adapter() -> BigQueryAdapter:
     adapter._conn = _ErrorConn()
     adapter._use_information_schema_row_counts = True
     adapter._region = "us"
+    adapter._metadata_cache = {}
     return adapter
 
 
@@ -490,6 +492,40 @@ class TestFetchRowCounts:
         assert records[0].row_count == 10
         assert records[1].row_count == 20
         # Only one raw_sql call for metadata, not two
+        assert len(adapter._conn.queries) == 1
+
+    def test_metadata_cache_shared_with_fetch_schema_info(self):
+        """fetch_row_counts reuses metadata already cached by fetch_schema_info."""
+        metadata_rows = [("orders", "BASE TABLE", 42)]
+        adapter = _make_adapter(
+            raw_sql_rows=[
+                metadata_rows,  # consumed by fetch_schema_info
+            ],
+            table_names={"analytics": ["orders"]},
+            tables={
+                ("analytics", "orders"): _StubTable(
+                    {"id": _FakeType("INT64", nullable=False)}
+                ),
+            },
+            use_info_schema_row_counts=True,
+        )
+        # First call: fetch_schema_info populates cache
+        adapter.fetch_schema_info(["analytics"])
+        assert len(adapter._conn.queries) == 1
+
+        # Second call: fetch_row_counts should NOT issue another SQL query
+        infos = [
+            TableInfo(
+                schema_name="analytics",
+                table_name="orders",
+                table_type="TABLE",
+                columns=[],
+            ),
+        ]
+        records = adapter.fetch_row_counts(infos)
+        assert len(records) == 1
+        assert records[0].row_count == 42
+        # Still only one SQL query total — cache was reused
         assert len(adapter._conn.queries) == 1
 
 
