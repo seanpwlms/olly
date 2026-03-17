@@ -1,6 +1,6 @@
 [project]
-name = "olly"
-version = "0.1.0"
+name = "olly-core"
+version = "0.1.1"
 description = "Data quality framework for monitoring data warehouses"
 readme = "README.md"
 authors = [
@@ -38,3 +38,6 @@ dev = [
 [build-system]
 requires = ["uv_build>=0.9.22,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-name = "olly"
