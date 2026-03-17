@@ -24,7 +24,7 @@ from olly.config_ops import (
     resolve_connections,
     validate_config,
 )
-from olly.logging import setup_logging
+from olly.logging import setup_logging, setup_query_logging
 from olly.checks.cost import summarize_costs
 from olly.models import CostRecord, DbtFinding, Finding
 from olly.results import write_findings_json
@@ -175,6 +175,8 @@ def run_check(
     """
     setup_logging(verbose)
     config = load_config()
+    if config.settings.log_queries:
+        setup_query_logging()
     warnings = validate_config(config)
     for warning in warnings:
         console.print(f"[yellow]Warning:[/yellow] {warning}")

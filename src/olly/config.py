@@ -76,6 +76,7 @@ class Settings:
     min_history_for_anomaly: int = 5
     write_results: bool = True
     state_schema: str | None = None
+    log_queries: bool = False
 
 
 @dataclass
@@ -297,6 +298,7 @@ def load_config(path: Path | None = None) -> OllyConfig:
         min_history_for_anomaly=settings_raw.get("min_history_for_anomaly", 5),
         write_results=settings_raw.get("write_results", True),
         state_schema=settings_raw.get("state_schema"),
+        log_queries=settings_raw.get("log_queries", False),
     )
 
     integrity_raw = raw.get("integrity", {})

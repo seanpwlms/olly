@@ -660,3 +660,29 @@ def test_execute_many_empty(wss):
         [],
     )
     assert not wss.has_snapshots()
+
+
+# ---------------------------------------------------------------------------
+# BigQuery escaping
+# ---------------------------------------------------------------------------
+
+
+def test_escape_backslash_mode():
+    from olly.state.warehouse import _escape
+
+    assert _escape("it's", backslash=False) == "it''s"
+    assert _escape("it's", backslash=True) == "it\\'s"
+    assert _escape("a\\b", backslash=True) == "a\\\\b"
+
+
+def test_bigquery_store_uses_backslash_escaping():
+    """BigQuery dialect must use backslash escaping for single quotes."""
+    conn = ibis.duckdb.connect(":memory:")
+    store = WarehouseStateStore(conn, "_olly_bq", "bigquery", create_tables=False)
+    assert store._esc("Timestamp(timezone='UTC')") == "Timestamp(timezone=\\'UTC\\')"
+
+
+def test_non_bigquery_store_uses_double_quote_escaping():
+    conn = ibis.duckdb.connect(":memory:")
+    store = WarehouseStateStore(conn, "_olly_pg", "postgres", create_tables=False)
+    assert store._esc("Timestamp(timezone='UTC')") == "Timestamp(timezone=''UTC'')"

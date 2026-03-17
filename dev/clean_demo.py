@@ -21,6 +21,8 @@ CLEANUP = [
     get_olly_dir(),
     DEV_DIR / "warehouse.duckdb",
     DEV_DIR / "warehouse.duckdb.wal",
+    DEV_DIR / "secondary.duckdb",
+    DEV_DIR / "secondary.duckdb.wal",
     DEV_DIR / "source.duckdb",
     DEV_DIR / "source.duckdb.wal",
     DEV_DIR / "target.duckdb",

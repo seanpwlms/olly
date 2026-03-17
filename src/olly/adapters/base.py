@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import ibis
 
+from olly.logging import timed_raw_sql
 from olly.models import ColumnInfo, CostRecord, TableInfo, UsageRecord, VolumeRecord
 
 if TYPE_CHECKING:
@@ -52,6 +53,12 @@ class BaseAdapter:
             parts.append(f"COALESCE(CAST({quoted} AS {self._cast_type()}), '')")
         return " || '|' || ".join(parts)
 
+    # --- Raw SQL execution with query logging ---
+
+    def _raw_sql(self, sql: str) -> Any:
+        """Execute raw SQL via Ibis, logging the query and its duration."""
+        return timed_raw_sql(self._conn, sql)
+
     # --- Scalar helpers ---
 
     def _fetch_scalar(self, sql: str, table_label: str) -> int:
@@ -60,7 +67,7 @@ class BaseAdapter:
         Returns ``0`` when the result is null or empty.
         """
         try:
-            result = self._conn.raw_sql(sql)
+            result = self._raw_sql(sql)
             row = result.fetchone()
             if not row or row[0] is None:
                 return 0
@@ -74,7 +81,7 @@ class BaseAdapter:
         Returns ``None`` when the result is null or empty.
         """
         try:
-            result = self._conn.raw_sql(sql)
+            result = self._raw_sql(sql)
             row = result.fetchone()
             if not row or row[0] is None:
                 return None
@@ -95,7 +102,7 @@ class BaseAdapter:
         try:
             safe_schema = schema_name.replace("'", "''")
             safe_table = table_name.replace("'", "''")
-            result = self._conn.raw_sql(
+            result = self._raw_sql(
                 "SELECT table_type FROM information_schema.tables "
                 f"WHERE table_schema = '{safe_schema}' AND table_name = '{safe_table}'"
             )

@@ -40,11 +40,51 @@ from olly.state import get_olly_dir
 
 DEV_DIR = Path(__file__).resolve().parent
 DB_PATH = DEV_DIR / "warehouse.duckdb"
+SECONDARY_DB_PATH = DEV_DIR / "secondary.duckdb"
 SOURCE_DB_PATH = DEV_DIR / "source.duckdb"
 TARGET_DB_PATH = DEV_DIR / "target.duckdb"
 DATA_DIR = DEV_DIR / "data"
 CONFIG_PATH = DEV_DIR / "olly.toml"
 DBT_TARGET_DIR = DEV_DIR / "target"
+
+
+def _seed_secondary_db() -> None:
+    """Create secondary.duckdb with an analytics schema for multi-connection testing."""
+    for path in (SECONDARY_DB_PATH, SECONDARY_DB_PATH.with_suffix(".duckdb.wal")):
+        if path.exists():
+            path.unlink()
+
+    conn = duckdb.connect(str(SECONDARY_DB_PATH))
+    conn.execute("CREATE SCHEMA analytics")
+
+    conn.execute("""
+        CREATE TABLE analytics.events (
+            id INTEGER,
+            event_type VARCHAR,
+            user_id INTEGER,
+            event_time TIMESTAMP
+        )
+    """)
+    now = datetime.now()
+    events = [
+        (i, f"type_{i % 5}", (i % 20) + 1, now - timedelta(hours=i))
+        for i in range(1, 201)
+    ]
+    conn.executemany("INSERT INTO analytics.events VALUES (?, ?, ?, ?)", events)
+
+    conn.execute("""
+        CREATE TABLE analytics.campaigns (
+            id INTEGER,
+            name VARCHAR,
+            budget DOUBLE
+        )
+    """)
+    campaigns = [
+        (i, f"Campaign {i}", round(100.0 + i * 50.0, 2)) for i in range(1, 16)
+    ]
+    conn.executemany("INSERT INTO analytics.campaigns VALUES (?, ?, ?)", campaigns)
+
+    conn.close()
 
 
 def _seed_integrity_dbs() -> None:
@@ -158,11 +198,12 @@ def _write_dbt_run_results() -> None:
 def setup() -> OllyConfig:
     """Create a fresh warehouse, config, and baseline snapshot."""
     # Clean slate
-    if DB_PATH.exists():
-        DB_PATH.unlink()
-    wal = DB_PATH.with_suffix(".duckdb.wal")
-    if wal.exists():
-        wal.unlink()
+    for db in (DB_PATH, SECONDARY_DB_PATH):
+        if db.exists():
+            db.unlink()
+        wal = db.with_suffix(".duckdb.wal")
+        if wal.exists():
+            wal.unlink()
     if CONFIG_PATH.exists():
         CONFIG_PATH.unlink()
 
@@ -235,6 +276,9 @@ def setup() -> OllyConfig:
 
     conn.close()
 
+    # Seed secondary warehouse for multi-connection testing
+    _seed_secondary_db()
+
     # Seed source/target databases for integrity checks
     _seed_integrity_dbs()
 
@@ -248,16 +292,29 @@ def setup() -> OllyConfig:
         selection=Selection(include_schemas=["main"]),
         overrides=[Override(match="main.orders", freshness_column="updated_at")],
     )
+    secondary_nc = NamedConnection(
+        name="secondary",
+        connection=ConnectionConfig(type="duckdb", path="secondary.duckdb"),
+        selection=Selection(include_schemas=["analytics"]),
+        overrides=[Override(match="analytics.events", freshness_column="event_time")],
+    )
     source_nc = NamedConnection(
         name="source",
         connection=ConnectionConfig(type="duckdb", path="source.duckdb"),
+        selection=Selection(include_schemas=["__none__"]),
     )
     target_nc = NamedConnection(
         name="target",
         connection=ConnectionConfig(type="duckdb", path="target.duckdb"),
+        selection=Selection(include_schemas=["__none__"]),
     )
     config = OllyConfig(
-        connections={"primary": nc, "source": source_nc, "target": target_nc},
+        connections={
+            "primary": nc,
+            "secondary": secondary_nc,
+            "source": source_nc,
+            "target": target_nc,
+        },
         settings=Settings(freshness_threshold_hours=24.0),
         dbt=DbtConfig(
             run_results_path="target/run_results.json",
@@ -325,6 +382,8 @@ def add_volume_history(config: OllyConfig, snapshots: int | None = None) -> None
     next_order_id = 1000
     next_product_id = 2000
     next_customer_id = 100
+    next_event_id = 1000
+    next_campaign_id = 100
 
     for i in range(snapshots):
         conn = duckdb.connect(str(DB_PATH))
@@ -352,6 +411,29 @@ def add_volume_history(config: OllyConfig, snapshots: int | None = None) -> None
         conn.executemany("INSERT INTO customers VALUES (?, ?, ?)", customers)
 
         conn.close()
+
+        # Add small inserts to secondary DB for volume history
+        sec_conn = duckdb.connect(str(SECONDARY_DB_PATH))
+
+        events = [
+            (next_event_id + j, f"type_{j % 5}", (j % 20) + 1, now)
+            for j in range(1, 6)
+        ]
+        next_event_id += len(events)
+        sec_conn.executemany(
+            "INSERT INTO analytics.events VALUES (?, ?, ?, ?)", events
+        )
+
+        campaigns = [
+            (next_campaign_id + j, f"Campaign {next_campaign_id + j}", 200.0 + j)
+            for j in range(1, 3)
+        ]
+        next_campaign_id += len(campaigns)
+        sec_conn.executemany(
+            "INSERT INTO analytics.campaigns VALUES (?, ?, ?)", campaigns
+        )
+
+        sec_conn.close()
 
         results = take_snapshot_in_dev(config)
         for name, snapshot_id, table_count, col_count in results:
@@ -433,6 +515,29 @@ def drift(config: OllyConfig | None = None) -> None:
 
     conn.close()
 
+    # --- Secondary DB drift ---
+    sec_conn = duckdb.connect(str(SECONDARY_DB_PATH))
+
+    # Schema drift: add column to events
+    sec_conn.execute("ALTER TABLE analytics.events ADD COLUMN source VARCHAR")
+
+    # Volume drift: spike campaigns from ~15 to ~5,015
+    sec_campaigns = [
+        (5000 + i, f"Bulk Campaign {i}", round(10.0 + i * 0.1, 2))
+        for i in range(1, 5001)
+    ]
+    sec_conn.executemany(
+        "INSERT INTO analytics.campaigns VALUES (?, ?, ?)", sec_campaigns
+    )
+
+    # Freshness drift: backdate events.event_time by 48 hours
+    sec_conn.execute("""
+        UPDATE analytics.events
+        SET event_time = event_time - INTERVAL 48 HOURS
+    """)
+
+    sec_conn.close()
+
     # Integrity drift: delete rows from target shipments to create COUNT mismatch
     target_conn = duckdb.connect(str(TARGET_DB_PATH))
     target_conn.execute("DELETE FROM shipments WHERE id >= 4")
@@ -444,13 +549,19 @@ def drift(config: OllyConfig | None = None) -> None:
         config = load_config(CONFIG_PATH)
 
     print("Drift introduced:")
+    print("  Primary:")
     print(
-        "  Schema:    orders.status added, customers.email dropped, new table 'returns'"
+        "    Schema:    orders.status added, customers.email dropped, new table 'returns'"
     )
-    print("  Volume:    products spiked from ~20 to ~10,020 rows")
-    print("  Freshness: orders.updated_at backdated by 48 hours")
-    print("  Contracts: products.price changed to VARCHAR, customers.email dropped")
-    print("  Integrity: target shipments rows deleted (COUNT mismatch)")
+    print("    Volume:    products spiked from ~20 to ~10,020 rows")
+    print("    Freshness: orders.updated_at backdated by 48 hours")
+    print("    Contracts: products.price changed to VARCHAR, customers.email dropped")
+    print("  Secondary:")
+    print("    Schema:    events.source column added")
+    print("    Volume:    campaigns spiked from ~15 to ~5,015 rows")
+    print("    Freshness: events.event_time backdated by 48 hours")
+    print("  Global:")
+    print("    Integrity: target shipments rows deleted (COUNT mismatch)")
     print()
 
     results = take_snapshot_in_dev(config)
@@ -484,7 +595,18 @@ def verify() -> None:
         expect_types={"schema", "volume", "freshness", "contracts", "integrity"},
     )
 
-    print("Verify complete: baseline clean, drift detected.")
+    # Verify findings come from both connections
+    connection_names = {f.connection_name for f in drift_findings}
+    expected_connections = {"primary", "secondary"}
+    missing_connections = expected_connections - connection_names
+    if missing_connections:
+        print(
+            f"Error: missing findings from connections: {sorted(missing_connections)}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    print("Verify complete: baseline clean, drift detected from both connections.")
 
 
 if __name__ == "__main__":

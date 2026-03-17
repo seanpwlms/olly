@@ -1,6 +1,6 @@
 [project]
 name = "olly-core"
-version = "0.1.1"
+version = "0.1.2"
 description = "Data quality framework for monitoring data warehouses"
 readme = "README.md"
 authors = [
@@ -41,3 +41,4 @@ build-backend = "uv_build"
 
 [tool.uv.build-backend]
 module-name = "olly"
+source-exclude = ["node_modules"]

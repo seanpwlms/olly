@@ -22,7 +22,7 @@ from olly.config_ops import (
     select_schema_names,
     validate_config,
 )
-from olly.logging import setup_logging
+from olly.logging import setup_logging, setup_query_logging
 from olly.state import open_state
 
 logger = logging.getLogger(__name__)
@@ -209,6 +209,8 @@ def run_snapshot(
     """
     setup_logging(verbose)
     config = load_config()
+    if config.settings.log_queries:
+        setup_query_logging()
     warnings = validate_config(config)
     for warning in warnings:
         console.print(f"[yellow]Warning:[/yellow] {warning}")

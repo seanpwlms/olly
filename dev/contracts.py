@@ -15,6 +15,7 @@ from olly.contracts import TableContract
 
 class Orders(TableContract):
     __table__ = "orders"
+    __connection__ = "primary"
 
     id: int | None
     customer_id: int | None
@@ -25,6 +26,7 @@ class Orders(TableContract):
 
 class Products(TableContract):
     __table__ = "products"
+    __connection__ = "primary"
 
     id: int | None
     name: str | None
@@ -33,6 +35,7 @@ class Products(TableContract):
 
 class Customers(TableContract):
     __table__ = "customers"
+    __connection__ = "primary"
 
     id: int | None
     name: str | None

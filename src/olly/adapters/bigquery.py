@@ -51,6 +51,7 @@ class BigQueryAdapter(BaseAdapter):
         )
         self._region = region
         self._use_information_schema_row_counts = use_information_schema_row_counts
+        self._metadata_cache: dict[str, dict[str, dict[str, int | str | None]]] = {}
 
     # --- BigQuery raw_sql wrapper ---
 
@@ -61,7 +62,7 @@ class BigQueryAdapter(BaseAdapter):
         ``raw_sql()`` which lacks the DBAPI cursor interface. This
         helper normalises the result.
         """
-        result = self._conn.raw_sql(sql)
+        result = self._raw_sql(sql)
         return [tuple(row.values()) for row in result]
 
     def _fetch_scalar(self, sql: str, table_label: str) -> int:
@@ -171,6 +172,10 @@ class BigQueryAdapter(BaseAdapter):
         ``TABLE_STORAGE`` via a LEFT JOIN so the query works even when
         storage metadata is unavailable.
         """
+        cached = self._metadata_cache.get(schema_name)
+        if cached is not None:
+            return cached
+
         try:
             safe_schema = schema_name.replace("`", "")
             safe_region = self._region.replace("`", "")
@@ -193,6 +198,7 @@ class BigQueryAdapter(BaseAdapter):
                 else None,
                 "row_count": row_count,
             }
+        self._metadata_cache[schema_name] = metadata
         return metadata
 
     def _get_table_type(self, schema_name: str, table_name: str) -> str:
@@ -238,15 +244,11 @@ class BigQueryAdapter(BaseAdapter):
         """
         logger.debug("Fetching row counts for %d tables", len(table_infos))
         records = []
-        metadata_by_schema: dict[str, dict[str, dict[str, int | str | None]]] = {}
         for ti in table_infos:
             if ti.table_type == "VIEW":
                 continue
             if self._use_information_schema_row_counts:
-                metadata = metadata_by_schema.get(ti.schema_name)
-                if metadata is None:
-                    metadata = self._fetch_table_metadata(ti.schema_name)
-                    metadata_by_schema[ti.schema_name] = metadata
+                metadata = self._fetch_table_metadata(ti.schema_name)
                 row_count = metadata.get(ti.table_name, {}).get("row_count")
                 if row_count is None:
                     logger.error(
@@ -379,8 +381,7 @@ class BigQueryAdapter(BaseAdapter):
             "UNNEST(referenced_tables) AS ref "
             "WHERE j.job_type = 'QUERY' "
             "AND j.state = 'DONE' "
-            "AND j.creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), "
-            f"INTERVAL {int(lookback_days)} DAY) "
+            f"AND j.creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(lookback_days)} DAY) "
             f"AND ref.dataset_id IN ({schema_filter}) "
             "AND ref.table_id NOT LIKE 'INFORMATION_SCHEMA.%' "
             "GROUP BY ref.dataset_id, ref.table_id"
@@ -448,8 +449,7 @@ class BigQueryAdapter(BaseAdapter):
             "UNNEST(referenced_tables) AS ref "
             "WHERE j.job_type = 'QUERY' "
             "AND j.state = 'DONE' "
-            "AND j.creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), "
-            f"INTERVAL {int(lookback_days)} DAY) "
+            f"AND j.creation_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {int(lookback_days)} DAY) "
             f"AND ref.dataset_id IN ({schema_filter}) "
             "AND ref.table_id NOT LIKE 'INFORMATION_SCHEMA.%' "
             "GROUP BY ref.dataset_id, ref.table_id, j.user_email"
