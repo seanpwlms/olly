@@ -68,6 +68,8 @@ class WarehouseStateStore(BaseStateStore):
     ACID-safe across multiple independent ``olly`` invocations.
     """
 
+    _BATCH_SIZE = 500
+
     def __init__(
         self, conn: Any, schema: str, conn_type: str,
         *, create_tables: bool = False,
@@ -128,32 +130,35 @@ class WarehouseStateStore(BaseStateStore):
         # Warehouse doesn't support lastrowid; use _next_id for snapshots
         return None
 
+    @staticmethod
+    def _format_row(row: tuple) -> str:
+        """Format a single row tuple as a SQL VALUES literal."""
+        parts = []
+        for val in row:
+            if isinstance(val, str):
+                parts.append(f"'{_escape(val)}'")
+            elif isinstance(val, bool):
+                parts.append("1" if val else "0")
+            elif val is None:
+                parts.append("NULL")
+            else:
+                parts.append(str(val))
+        return f"({', '.join(parts)})"
+
     def _execute_many(
         self, sql: str, column_names: list[str], rows: list[tuple]
     ) -> None:
         if not rows:
             return
-        # Build a multi-row VALUES insert
         # Extract the table and column part from the SQL template
         # e.g., "INSERT INTO schema.table (col1, col2) VALUES (:col1, :col2)"
         values_idx = sql.upper().index("VALUES")
         prefix = sql[:values_idx]
 
-        all_values = []
-        for row in rows:
-            parts = []
-            for val in row:
-                if isinstance(val, str):
-                    parts.append(f"'{_escape(val)}'")
-                elif isinstance(val, bool):
-                    parts.append("1" if val else "0")
-                elif val is None:
-                    parts.append("NULL")
-                else:
-                    parts.append(str(val))
-            all_values.append(f"({', '.join(parts)})")
-
-        self._exec(f"{prefix}VALUES {', '.join(all_values)}")
+        for i in range(0, len(rows), self._BATCH_SIZE):
+            batch = rows[i : i + self._BATCH_SIZE]
+            values = [self._format_row(row) for row in batch]
+            self._exec(f"{prefix}VALUES {', '.join(values)}")
 
     def _resolve_params(self, sql: str, params: dict[str, Any] | None) -> str:
         """Replace :name placeholders with escaped literal values."""
@@ -212,22 +217,24 @@ class WarehouseStateStore(BaseStateStore):
         from datetime import datetime, timezone
         now = datetime.now(timezone.utc).isoformat()
         finding_id = self._generate_id()
-        values = []
+        all_values = []
         for f in findings:
             details_json = json.dumps(f.details).replace("'", "''")
-            values.append(
+            all_values.append(
                 f"({finding_id}, '{_escape(now)}', '{_escape(f.connection_name)}', "
                 f"'{_escape(f.check_type)}', '{_escape(f.severity)}', "
                 f"'{_escape(f.schema_name)}', '{_escape(f.table_name)}', "
                 f"'{_escape(f.description)}', '{details_json}')"
             )
             finding_id += 1
-        self._exec(
+        prefix = (
             f"INSERT INTO {self._table('findings')} "
             f"(id, created_at, connection_name, check_type, severity, schema_name, "
             f"table_name, description, details) "
-            f"VALUES {', '.join(values)}"
         )
+        for i in range(0, len(all_values), self._BATCH_SIZE):
+            batch = all_values[i : i + self._BATCH_SIZE]
+            self._exec(f"{prefix}VALUES {', '.join(batch)}")
         logger.debug("Stored %d findings to warehouse", len(findings))
 
     def store_dbt_findings(
@@ -241,22 +248,24 @@ class WarehouseStateStore(BaseStateStore):
         now = datetime.now(timezone.utc).isoformat()
         finding_id = self._generate_id()
         run_id_sql = str(dbt_run_id) if dbt_run_id is not None else "NULL"
-        values = []
+        all_values = []
         for f in dbt_findings:
             details_json = json.dumps(f.details).replace("'", "''")
-            values.append(
+            all_values.append(
                 f"({finding_id}, '{_escape(now)}', '{_escape(f.resource_type)}', "
                 f"'{_escape(f.severity)}', '{_escape(f.unique_id)}', "
                 f"'{_escape(f.status)}', {f.execution_time}, "
                 f"'{_escape(f.description)}', '{details_json}', {run_id_sql})"
             )
             finding_id += 1
-        self._exec(
+        prefix = (
             f"INSERT INTO {self._table('dbt_findings')} "
             f"(id, created_at, resource_type, severity, unique_id, status, "
             f"execution_time, description, details, dbt_run_id) "
-            f"VALUES {', '.join(values)}"
         )
+        for i in range(0, len(all_values), self._BATCH_SIZE):
+            batch = all_values[i : i + self._BATCH_SIZE]
+            self._exec(f"{prefix}VALUES {', '.join(batch)}")
         logger.debug("Stored %d dbt findings to warehouse", len(dbt_findings))
 
     def _init_tables(self) -> None:

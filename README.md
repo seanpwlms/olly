@@ -10,13 +10,13 @@ By default, the schema checks are metadata-only, making it lightweight and low o
 ## Install
 
 ```bash
-uv add olly
+uv add olly-core
 ```
 
 Install with an adapter:
 
 ```bash
-uv add "olly[duckdb]"    # or postgres, bigquery, snowflake
+uv add "olly-core[duckdb]"    # or postgres, bigquery, snowflake
 ```
 
 ## Quickstart
@@ -159,7 +159,7 @@ volume_zscore_threshold = 3.0       # z-score cutoff for volume anomalies
 volume_method = "ewma"              # "ewma" (default) or "zscore"
 history_depth = 30                  # snapshots to keep for trend analysis
 min_history_for_anomaly = 5         # minimum snapshots before volume checks run
-write_results = true                # persist findings to ~/.olly/<project-hash>/findings.json
+write_results = true                # persist findings to ~/.olly/findings.json
 state_schema = "olly_state"         # optional: store state in warehouse instead of local SQLite
 ```
 
@@ -167,7 +167,7 @@ EWMA (Exponentially Weighted Moving Average) is the default volume method. It we
 
 ### Overrides
 
-Override settings for specific tables or patterns, scoped per connection. Later overrides take precedence:
+Override settings for specific tables or patterns, scoped per connection. More specific matches win (schema < pattern < exact table):
 
 ```toml
 [[connections.primary.overrides]]
@@ -348,7 +348,7 @@ for finding in findings:
 Install the dashboard extra and start the server:
 
 ```bash
-uv add "olly[dashboard]"
+uv add "olly-core[dashboard]"
 olly serve
 ```
 
@@ -358,13 +358,13 @@ The dashboard reads from a state database (written by `olly check`) and displays
 
 Olly uses a snapshot-and-diff model:
 
-1. **`olly snapshot`** connects to your warehouse via Ibis, introspects schemas and tables, and stores schema info and row counts in a local SQLite database (`~/.olly/<project-hash>/state.db`).
+1. **`olly snapshot`** connects to your warehouse via Ibis, introspects schemas and tables, and stores schema info and row counts in a local SQLite database (`~/.olly/state.db`).
 
-2. **`olly check`** takes a new snapshot and compares it to the previous one. It runs schema diffs, volume anomaly detection (z-score over history), freshness checks, and any configured integrity/contract/dbt checks.
+2. **`olly check`** compares the two most recent snapshots. It runs schema diffs, volume anomaly detection (z-score over history), freshness checks, and any configured integrity/contract/dbt checks.
 
-3. Findings are printed to the terminal and optionally written to `~/.olly/<project-hash>/findings.json` for the dashboard or downstream tooling.
+3. Findings are printed to the terminal and optionally written to `~/.olly/findings.json` for the dashboard or downstream tooling.
 
-By default state is fully local — Olly only reads from your warehouse and writes to the `~/.olly/<project-hash>/` directory. Optionally, set `state_schema` in `[settings]` and run `olly create-state` to store state in your warehouse instead.
+By default state is fully local — Olly only reads from your warehouse and writes to the `~/.olly/` directory. Optionally, set `state_schema` in `[settings]` and run `olly create-state` to store state in your warehouse instead.
 
 ## Development
 

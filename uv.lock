@@ -937,7 +937,7 @@ wheels = [
 ]
 
 [[package]]
-name = "olly"
+name = "olly-core"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
