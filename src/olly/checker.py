@@ -33,6 +33,7 @@ def run_checks(
     adapter: Adapter | None = None,
     connection_name: str | None = None,
     on_progress: ProgressCallback | None = None,
+    select_checks: set[str] | None = None,
 ) -> tuple[list[Finding], list[DbtFinding], list[CostRecord]]:
     """Run all enabled checks against the warehouse and return findings.
 
@@ -45,15 +46,26 @@ def run_checks(
         connection_name: Optional connection name to check.
         on_progress: Optional callback invoked before each check step with
             ``(connection_name, check_name)``.
+        select_checks: Optional set of check type names to run. When ``None``,
+            all checks are executed.
 
     Returns:
         Tuple of (warehouse findings, dbt findings, cost records).
     """
+    def _selected(name: str) -> bool:
+        return select_checks is None or name in select_checks
+
     logger.info("Starting checks")
     findings: list[Finding] = []
     cost_records: list[CostRecord] = []
 
-    connections = resolve_connections(config, connection_name)
+    per_conn_types = {"schema", "volume", "freshness", "usage", "cost", "contracts"}
+    run_per_connection = select_checks is None or bool(select_checks & per_conn_types)
+
+    connections = resolve_connections(config, connection_name) if run_per_connection else []
+
+    snapshot_types = {"schema", "volume", "freshness", "contracts"}
+    needs_snapshots = select_checks is None or bool(select_checks & snapshot_types)
 
     last_backend = None
     for name, nc in connections:
@@ -65,7 +77,7 @@ def run_checks(
         schemas = select_schema_names(nc.selection, backend.list_schemas())
 
         # Usage checks (independent of snapshots)
-        if config.usage.enabled:
+        if _selected("usage") and config.usage.enabled:
             logger.debug("[%s] Running usage checks", name)
             if on_progress:
                 on_progress(name, "usage")
@@ -79,7 +91,7 @@ def run_checks(
 
         with open_state(config, backend) as state_db:
             # Cost checks (independent of snapshots)
-            if config.usage.cost_enabled:
+            if _selected("cost") and config.usage.cost_enabled:
                 logger.debug("[%s] Running cost checks", name)
                 if on_progress:
                     on_progress(name, "cost")
@@ -93,7 +105,10 @@ def run_checks(
                 if conn_cost_records:
                     state_db.store_cost_data(conn_cost_records, connection_name=name)
 
-            # Skip snapshot-based checks if we don't have at least 2 snapshots
+            # Skip snapshot-based checks if not selected or not enough snapshots
+            if not needs_snapshots:
+                continue
+
             if not state_db.has_multiple_snapshots(connection_name=name):
                 logger.debug(
                     "[%s] Skipping snapshot-based checks (fewer than 2 snapshots)", name
@@ -106,16 +121,17 @@ def run_checks(
             latest_volumes = state_db.get_latest_volume(connection_name=name)
 
             # Schema checks
-            logger.debug("[%s] Running schema checks", name)
-            if on_progress:
-                on_progress(name, "schema")
-            schema_findings = check_schema(latest_tables, baseline_tables)
-            for f in schema_findings:
-                f.connection_name = name
-            findings.extend(schema_findings)
+            if _selected("schema"):
+                logger.debug("[%s] Running schema checks", name)
+                if on_progress:
+                    on_progress(name, "schema")
+                schema_findings = check_schema(latest_tables, baseline_tables)
+                for f in schema_findings:
+                    f.connection_name = name
+                findings.extend(schema_findings)
 
-            logger.debug("[%s] Running contract checks", name)
-            if config.contracts.module:
+            if _selected("contracts") and config.contracts.module:
+                logger.debug("[%s] Running contract checks", name)
                 if on_progress:
                     on_progress(name, "contracts")
                 config_path = config.config_path or Path("olly.toml")
@@ -131,47 +147,56 @@ def run_checks(
                 findings.extend(contract_findings)
 
             # Volume checks
-            logger.debug("[%s] Running volume checks", name)
-            if on_progress:
-                on_progress(name, "volume")
-            overrides_map = {
-                (t.schema_name, t.table_name): resolve_table_settings_with_sources(
-                    config.settings, nc.overrides, t.schema_name, t.table_name
-                )
-                for t in latest_tables
-            }
-            thresholds = {
-                key: settings.volume_zscore_threshold
-                for key, settings in overrides_map.items()
-            }
-            methods = {
-                key: settings.volume_method
-                for key, settings in overrides_map.items()
-            }
+            if _selected("volume"):
+                logger.debug("[%s] Running volume checks", name)
+                if on_progress:
+                    on_progress(name, "volume")
+                overrides_map = {
+                    (t.schema_name, t.table_name): resolve_table_settings_with_sources(
+                        config.settings, nc.overrides, t.schema_name, t.table_name
+                    )
+                    for t in latest_tables
+                }
+                thresholds = {
+                    key: settings.volume_zscore_threshold
+                    for key, settings in overrides_map.items()
+                }
+                methods = {
+                    key: settings.volume_method
+                    for key, settings in overrides_map.items()
+                }
 
-            volume_findings = check_volume(
-                latest_volumes, state_db, config.settings, thresholds,
-                methods=methods, connection_name=name,
-            )
-            for f in volume_findings:
-                f.connection_name = name
-            findings.extend(volume_findings)
+                volume_findings = check_volume(
+                    latest_volumes, state_db, config.settings, thresholds,
+                    methods=methods, connection_name=name,
+                )
+                for f in volume_findings:
+                    f.connection_name = name
+                findings.extend(volume_findings)
 
             # Freshness checks
-            logger.debug("[%s] Running freshness checks", name)
-            if on_progress:
-                on_progress(name, "freshness")
-            freshness_findings = check_freshness(
-                backend, latest_tables, config.settings, overrides_map, state_db,
-                connection_name=name,
-            )
-            for f in freshness_findings:
-                f.connection_name = name
-            findings.extend(freshness_findings)
+            if _selected("freshness"):
+                logger.debug("[%s] Running freshness checks", name)
+                if on_progress:
+                    on_progress(name, "freshness")
+                if not _selected("volume"):
+                    overrides_map = {
+                        (t.schema_name, t.table_name): resolve_table_settings_with_sources(
+                            config.settings, nc.overrides, t.schema_name, t.table_name
+                        )
+                        for t in latest_tables
+                    }
+                freshness_findings = check_freshness(
+                    backend, latest_tables, config.settings, overrides_map, state_db,
+                    connection_name=name,
+                )
+                for f in freshness_findings:
+                    f.connection_name = name
+                findings.extend(freshness_findings)
 
     # Integrity checks (global, not per-connection)
-    logger.debug("Running integrity checks")
-    if config.integrity.module:
+    if _selected("integrity") and config.integrity.module:
+        logger.debug("Running integrity checks")
         if on_progress:
             on_progress("", "integrity")
         config_path = config.config_path or Path("olly.toml")
@@ -179,10 +204,13 @@ def run_checks(
         findings.extend(run_syncs(syncs, connections=config.connections))
 
     # dbt checks (global)
-    logger.debug("Running dbt checks")
-    if on_progress:
-        on_progress("", "dbt")
-    dbt_findings, dbt_run = _run_dbt_checks(config)
+    dbt_findings: list[DbtFinding] = []
+    dbt_run: DbtRunRecord | None = None
+    if _selected("dbt"):
+        logger.debug("Running dbt checks")
+        if on_progress:
+            on_progress("", "dbt")
+        dbt_findings, dbt_run = _run_dbt_checks(config)
 
     # Store all findings in the correct state store (warehouse or SQLite)
     if findings or dbt_findings or dbt_run:
