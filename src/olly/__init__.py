@@ -44,6 +44,7 @@ def check(
     verbose: bool = False,
     write_results: bool | None = None,
     connection: str | None = None,
+    select: str | None = None,
 ) -> None:
     """Run data quality checks against the latest snapshot.
 
@@ -56,6 +57,9 @@ def check(
         write_results: Persist check results to the state database. Defaults to
             the value in ``olly.toml`` when ``None``.
         connection: Name of a specific connection to check.
+        select: Comma-separated list of check types to run (e.g. ``schema,volume``).
+            Valid types: schema, volume, freshness, usage, cost, contracts,
+            integrity, dbt. Runs all checks when omitted.
     """
     from olly.cli.check import run_check
 
@@ -64,6 +68,7 @@ def check(
         verbose=verbose,
         write_results=write_results,
         connection_name=connection,
+        select=select,
     )
 
 

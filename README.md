@@ -1,9 +1,9 @@
 # Olly
 
-Data quality framework that monitors data warehouses for schema changes, volume anomalies, freshness issues, cross-source integrity, cost spikes, usage staleness, and contract violations. Supports DuckDB, Postgres, BigQuery, and Snowflake via [Ibis](https://ibis-project.org/).
+Olly is a data observability framework that monitors data warehouses for schema changes, volume anomalies, freshness issues, cross-source integrity, cost spikes, unused tables, and contract violations. 
+Currently supports DuckDB, Postgres, BigQuery, and Snowflake via [Ibis](https://ibis-project.org/).
 
-By default, the schema checks are metadata-only, making it lightweight and low overhead.
-
+By default, the schema checks are metadata-only, making it lightweight and low-cost.
 
 🚨 This should be considered experimental and subject to change.
 
@@ -27,9 +27,10 @@ olly snapshot             # capture current warehouse state
 olly check                # detect changes since last snapshot
 ```
 
-That's it. Olly compares consecutive snapshots and reports schema changes and freshness failures out of the box.
+That's it. Olly compares consecutive snapshots and reports schema changes, volume anomalies, and stale tables, out of the box.
+You can add more specific configuration for high-value objects.
 
-## What it checks
+## What's available
 
 | Check | What it detects | Severity |
 |-------|----------------|----------|
@@ -38,10 +39,9 @@ That's it. Olly compares consecutive snapshots and reports schema changes and fr
 | **Freshness** | Tables not updated within the configured threshold | warning |
 | **Integrity** | Row count or hash mismatches between source and target databases | error |
 | **Contracts** | Schema violations against declared Python contracts | error or warning |
-| **dbt** | Failures from `run_results.json` | error or warning |
-| **dbt perf** | dbt node execution time anomalies via EWMA over run history | warning |
+| **dbt integration** | Ingest `run_results.json`, and get reporting on test failures, changes in execution time, and track DDL changes | error or warning |
 | **Usage** | Tables not queried within a lookback window (BigQuery only) | error or warning |
-| **Cost** | Query cost spikes detected via z-score anomaly detection (BigQuery only) | warning |
+| **Cost** | Query cost spike (BigQuery only) | warning |
 
 ## Example output
 
@@ -163,7 +163,9 @@ write_results = true                # persist findings to ~/.olly/findings.json
 state_schema = "olly_state"         # optional: store state in warehouse instead of local SQLite
 ```
 
-EWMA (Exponentially Weighted Moving Average) is the default volume method. It weights recent observations more heavily, making it better at handling trending tables without false positives. Use `"zscore"` for stationary tables where equal weighting of all history is preferred. Both methods can be overridden per table.
+EWMA (Exponentially Weighted Moving Average) is the default volume method. 
+It weights recent observations more heavily, making it better at handling trending tables without false positives. 
+Use `"zscore"` for stationary tables where equal weighting of all history is preferred. Both methods can be overridden per table.
 
 ### Overrides
 
@@ -180,7 +182,7 @@ match = "main.*"
 freshness_column = "updated_at"
 ```
 
-Use `olly plan` to see how overrides resolve for each table.
+Use `olly plan` to see how overrides resolve for each object.
 
 ### Cross-connection integrity
 
@@ -302,7 +304,7 @@ A legacy `[cost]` section is still accepted for backward compatibility, but new 
 
 When `olly check` runs, it shows a cost summary with top tables and top users by spend. Cost spikes are flagged as findings when the current period's total exceeds the historical mean by more than `spike_threshold` standard deviations.
 
-### Slack alerts
+### Slack notifications
 
 Send findings to a Slack channel via an [incoming webhook](https://api.slack.com/messaging/webhooks):
 
@@ -360,11 +362,11 @@ Olly uses a snapshot-and-diff model:
 
 1. **`olly snapshot`** connects to your warehouse via Ibis, introspects schemas and tables, and stores schema info and row counts in a local SQLite database (`~/.olly/state.db`).
 
-2. **`olly check`** compares the two most recent snapshots. It runs schema diffs, volume anomaly detection (z-score over history), freshness checks, and any configured integrity/contract/dbt checks.
+2. **`olly check`** compares the two most recent snapshots. It runs schema diffs, volume anomaly detection, freshness checks, and any configured integrity/contract/dbt checks.
 
-3. Findings are printed to the terminal and optionally written to `~/.olly/findings.json` for the dashboard or downstream tooling.
+3. Findings are printed to the terminal and written to a sqlite database, or specified warehouse schema.
 
-By default state is fully local — Olly only reads from your warehouse and writes to the `~/.olly/` directory. Optionally, set `state_schema` in `[settings]` and run `olly create-state` to store state in your warehouse instead.
+By default, state is fully local — Olly only reads from your warehouse and writes to the `~/.olly/` directory. Optionally, set `state_schema` in `[settings]` and run `olly create-state` to store state in your warehouse instead.
 
 ## Development
 
