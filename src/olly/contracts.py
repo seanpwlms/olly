@@ -3,13 +3,14 @@ from __future__ import annotations
 import types
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Union, get_args, get_origin, get_type_hints
 
 from olly._import import import_module_spec
 
 
-SUPPORTED_TYPES = {int, float, str, bool, datetime, date}
+SUPPORTED_TYPES = {int, float, str, bool, datetime, date, Decimal}
 
 
 @dataclass(frozen=True)

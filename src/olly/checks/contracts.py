@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import date, datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, cast
 
 import ibis.expr.datatypes as dt
@@ -136,7 +137,10 @@ def _type_compatible(expected: type, ibis_type: dt.DataType) -> bool:
         return isinstance(ibis_type, dt.Integer)
 
     if expected is float:
-        return isinstance(ibis_type, dt.Floating)
+        return isinstance(ibis_type, (dt.Floating, dt.Decimal))
+
+    if expected is Decimal:
+        return isinstance(ibis_type, dt.Decimal)
 
     if expected is str:
         return isinstance(ibis_type, dt.String)

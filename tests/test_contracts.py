@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
@@ -373,10 +374,38 @@ class TestTypeCompatible:
     def test_date_rejects_str(self):
         assert not _type_compatible(date, dt.String(nullable=False))
 
+    # --- decimal ---
+
+    def test_decimal_decimal(self):
+        assert _type_compatible(Decimal, dt.Decimal(10, 2, nullable=True))
+
+    def test_float_tolerates_decimal(self):
+        assert _type_compatible(float, dt.Decimal(10, 2, nullable=True))
+
+    def test_decimal_rejects_int(self):
+        assert not _type_compatible(Decimal, dt.Int64(nullable=False))
+
     # --- unsupported ---
 
     def test_unsupported_type_returns_false(self):
         assert not _type_compatible(bytes, dt.String(nullable=False))
+
+
+def test_contract_decimal_column_collected():
+    """Decimal annotations on TableContract subclasses must be picked up."""
+    from olly.contracts import TableContract, _registry
+
+    _registry.clear()
+
+    class _FctOrders(TableContract):
+        __schema__ = "analytics"
+        __table__ = "fct_orders"
+        amount: Decimal | None
+
+    spec = _registry[-1]
+    assert "amount" in spec.columns
+    assert spec.columns["amount"].dtype is Decimal
+    assert spec.columns["amount"].nullable is True
 
 
 def test_contracts_integration(backend):
