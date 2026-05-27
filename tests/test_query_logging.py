@@ -8,6 +8,7 @@ from olly.config import Settings
 from olly.logging import (
     _JsonlFormatter,
     log_query,
+    setup_logging,
     setup_query_logging,
     timed_raw_sql,
 )
@@ -177,6 +178,33 @@ log_queries = true
 
         config = load_config()
         assert config.settings.log_queries is True
+
+
+class TestQueryStderrSuppression:
+    def test_queries_silent_unless_enabled(self, capsys):
+        """Without setup_query_logging, query log lines must not reach stderr."""
+        olly_logger = logging.getLogger("olly")
+        query_logger = logging.getLogger("olly.queries")
+        original_olly_handlers = olly_logger.handlers[:]
+        original_query_handlers = query_logger.handlers[:]
+        original_propagate = query_logger.propagate
+        olly_logger.handlers = []
+        query_logger.handlers = []
+        query_logger.propagate = True
+
+        try:
+            setup_logging(verbose=False)
+            log_query("SELECT secret_column FROM users", 1.23)
+
+            for h in olly_logger.handlers:
+                h.flush()
+            captured = capsys.readouterr()
+            assert "olly.queries" not in captured.err
+            assert "secret_column" not in captured.err
+        finally:
+            olly_logger.handlers = original_olly_handlers
+            query_logger.handlers = original_query_handlers
+            query_logger.propagate = original_propagate
 
 
 class TestEndToEndJsonl:
