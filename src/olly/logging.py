@@ -38,6 +38,7 @@ def setup_logging(verbose: bool = False) -> None:
     root = logging.getLogger("olly")
     root.setLevel(level)
     root.addHandler(handler)
+    logging.getLogger("olly.queries").propagate = False
 
 
 def setup_query_logging() -> None:
