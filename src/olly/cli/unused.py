@@ -47,7 +47,10 @@ def run_unused(
         schemas = select_schema_names(nc.selection, backend.list_schemas())
 
         usage_config = config.usage
-        findings = check_usage(backend, schemas, usage_config)
+        findings = check_usage(
+            backend, schemas, usage_config,
+            all_tables=backend.list_tables(schemas),
+        )
         for f in findings:
             f.connection_name = name
         all_findings.extend(findings)

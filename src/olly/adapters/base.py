@@ -24,6 +24,13 @@ class BaseAdapter:
 
     _conn: Any  # Ibis backend connection
 
+    SUPPORTS_USAGE_HISTORY: bool = False
+    """Whether the adapter can report per-table query history.
+
+    When False, ``check_usage`` is skipped to avoid flagging every table as
+    unused on warehouses with no usage telemetry (e.g. DuckDB).
+    """
+
     @property
     def backend(self) -> Any:
         """Return the underlying Ibis backend connection."""

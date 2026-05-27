@@ -22,6 +22,8 @@ class BigQueryAdapter(BaseAdapter):
     introspection, row counts, timestamp queries, and content hashing.
     """
 
+    SUPPORTS_USAGE_HISTORY = True
+
     def __init__(
         self,
         project: str,

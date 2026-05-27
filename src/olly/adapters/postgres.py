@@ -19,6 +19,8 @@ class PostgresAdapter(BaseAdapter):
     row counting, timestamp extraction, and content-hashing capabilities.
     """
 
+    SUPPORTS_USAGE_HISTORY = True
+
     def __init__(self, url: str, **connect_kwargs: Any) -> None:
         """Initialize the adapter and open a Postgres connection via Ibis.
 

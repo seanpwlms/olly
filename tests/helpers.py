@@ -23,11 +23,16 @@ class FakeUsageAdapter:
         findings = check_usage(adapter, ["main"], config)
     """
 
+    SUPPORTS_USAGE_HISTORY = True
+
     def __init__(self, records: list[UsageRecord] | None = None) -> None:
         self._records = records or []
 
     def list_schemas(self) -> list[str]:
         return ["public"]
+
+    def list_tables(self, schemas: list[str]) -> list[tuple[str, str]]:
+        return [(r.schema_name, r.table_name) for r in self._records]
 
     def fetch_table_usage(
         self,
