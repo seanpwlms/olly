@@ -56,7 +56,7 @@ def run_unused(
         all_findings.extend(findings)
 
     if output_json:
-        console.print(
+        print(
             json.dumps(
                 {"findings": [asdict(f) for f in all_findings]}, indent=2
             )
