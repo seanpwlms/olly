@@ -113,6 +113,23 @@ def test_all_tables_flags_missing_from_query_history():
         assert f.details["last_queried_at"] is None
 
 
+def test_usage_check_skipped_on_unsupported_adapter():
+    """Adapters without SUPPORTS_USAGE_HISTORY return no findings even with all_tables."""
+    class UnsupportedAdapter:
+        SUPPORTS_USAGE_HISTORY = False
+
+        def fetch_table_usage(self, schemas, lookback_days, region="us"):
+            return []
+
+    findings = check_usage(
+        cast(Any, UnsupportedAdapter()),
+        ["main"],
+        _config(),
+        all_tables=[("main", "t1"), ("main", "t2")],
+    )
+    assert findings == []
+
+
 def test_severity_config_override():
     """Setting severity='error' in config propagates to all findings."""
     now = datetime.now(timezone.utc)

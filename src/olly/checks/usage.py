@@ -35,6 +35,12 @@ def check_usage(
     Returns:
         Findings for unused or stale tables.
     """
+    if not getattr(adapter, "SUPPORTS_USAGE_HISTORY", False):
+        logger.info(
+            "Adapter does not report query history; skipping usage check"
+        )
+        return []
+
     try:
         usage_records = adapter.fetch_table_usage(
             schemas=schemas,

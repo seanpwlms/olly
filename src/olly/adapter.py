@@ -19,6 +19,9 @@ ProgressCallback = Callable[[str, str], None]
 class Adapter(Protocol):
     """Protocol that all warehouse adapters must implement."""
 
+    SUPPORTS_USAGE_HISTORY: bool
+    """Whether the adapter reports per-table query history."""
+
     def list_schemas(self) -> list[str]:
         """Return all schema names in the warehouse."""
         ...
