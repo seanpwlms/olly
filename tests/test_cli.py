@@ -292,6 +292,27 @@ def test_print_findings_json_with_cost(capsys):
     assert "cost_summary" in output
 
 
+def test_print_findings_json_is_parseable_with_long_strings(capsys):
+    """Long string values must not be hard-wrapped into invalid JSON."""
+    import json as _json
+
+    long_desc = "x" * 5000
+    findings = [
+        Finding(
+            check_type="dbt",
+            severity="error",
+            schema_name="main",
+            table_name="orders",
+            description=long_desc,
+            details={"compiled_code": "SELECT " + ("a, " * 1000) + "1"},
+        ),
+    ]
+    print_findings_json(findings)
+    output = capsys.readouterr().out
+    parsed = _json.loads(output)
+    assert parsed["findings"][0]["description"] == long_desc
+
+
 # --- _run_dbt_checks ---
 
 

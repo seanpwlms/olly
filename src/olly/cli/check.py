@@ -160,7 +160,7 @@ def print_findings_json(
         data["dbt_findings"] = [asdict(f) for f in dbt_findings]
     if cost_records:
         data["cost_summary"] = summarize_costs(cost_records)
-    console.print(json.dumps(data, indent=2))
+    print(json.dumps(data, indent=2))
 
 
 def _parse_select(select: str | None) -> set[str] | None:
