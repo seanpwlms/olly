@@ -143,12 +143,16 @@ def test_load_usage_config(tmp_path):
         "lookback_days = 60\n"
         "unused_threshold_days = 14\n"
         'bigquery_region = "eu"\n'
+        "rollup_schemas = false\n"
+        "schema_unused_threshold_pct = 80.0\n"
     )
     config = load_config(path)
     assert config.usage.enabled is True
     assert config.usage.lookback_days == 60
     assert config.usage.unused_threshold_days == 14
     assert config.usage.bigquery_region == "eu"
+    assert config.usage.rollup_schemas is False
+    assert config.usage.schema_unused_threshold_pct == 80.0
 
 
 def test_usage_config_defaults(tmp_path):
@@ -160,6 +164,8 @@ def test_usage_config_defaults(tmp_path):
     assert config.usage.lookback_days == 90
     assert config.usage.unused_threshold_days == 30
     assert config.usage.bigquery_region == "us"
+    assert config.usage.rollup_schemas is True
+    assert config.usage.schema_unused_threshold_pct == 100.0
 
 
 def test_validate_usage_lookback_less_than_threshold():

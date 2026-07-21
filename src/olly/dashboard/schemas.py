@@ -162,6 +162,7 @@ class UsageStatsModel(BaseModel):
 
     unused_count: int
     stale_count: int
+    unused_schema_count: int
     total_cost_usd: float | None
 
 

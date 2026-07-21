@@ -3,7 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-from olly.checks.usage import check_usage
+from olly.checks.usage import (
+    ROLLUP_TABLE_LIST_CAP,
+    build_usage_findings,
+    check_usage,
+    classify_table_usage,
+    summarize_schema_usage,
+)
 from olly.config import UsageConfig
 from olly.models import UsageRecord
 from helpers import FakeUsageAdapter
@@ -14,12 +20,16 @@ def _config(
     lookback_days: int = 90,
     unused_threshold_days: int = 30,
     bigquery_region: str = "us",
+    rollup_schemas: bool = False,
+    schema_unused_threshold_pct: float = 100.0,
 ) -> UsageConfig:
     return UsageConfig(
         enabled=enabled,
         lookback_days=lookback_days,
         unused_threshold_days=unused_threshold_days,
         bigquery_region=bigquery_region,
+        rollup_schemas=rollup_schemas,
+        schema_unused_threshold_pct=schema_unused_threshold_pct,
     )
 
 
@@ -138,8 +148,161 @@ def test_severity_config_override():
         UsageRecord("main", "unused", None),
     ]
     adapter = FakeUsageAdapter(records)
-    cfg = UsageConfig(enabled=True, severity="error")
+    cfg = UsageConfig(enabled=True, severity="error", rollup_schemas=False)
     findings = check_usage(cast(Any, adapter), ["main"], cfg)
     assert len(findings) == 2
     for f in findings:
         assert f.severity == "error"
+
+
+def test_rollup_fully_inactive_schema():
+    """A schema with no active tables collapses into one schema finding."""
+    now = datetime.now(timezone.utc)
+    records = [
+        UsageRecord("dead", "t1", None),
+        UsageRecord("dead", "t2", now - timedelta(days=60)),
+    ]
+    adapter = FakeUsageAdapter(records)
+    findings = check_usage(
+        cast(Any, adapter), ["dead"], _config(rollup_schemas=True)
+    )
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.check_type == "usage"
+    assert f.schema_name == "dead"
+    assert f.table_name == "*"
+    assert "Unused schema: dead" in f.description
+    assert f.details["scope"] == "schema"
+    assert f.details["table_count"] == 2
+    assert f.details["unused_count"] == 1
+    assert f.details["stale_count"] == 1
+    assert f.details["inactive_pct"] == 100.0
+    assert f.details["tables"] == ["t1", "t2"]
+    assert f.details["tables_truncated"] is False
+    assert f.details["last_activity_at"] is not None
+
+
+def test_rollup_skips_schema_with_active_table():
+    """Default 100% threshold: an active table prevents the rollup."""
+    now = datetime.now(timezone.utc)
+    records = [
+        UsageRecord("main", "active", now - timedelta(days=1)),
+        UsageRecord("main", "unused", None),
+    ]
+    adapter = FakeUsageAdapter(records)
+    findings = check_usage(
+        cast(Any, adapter), ["main"], _config(rollup_schemas=True)
+    )
+    assert len(findings) == 1
+    assert findings[0].table_name == "unused"
+
+
+def test_rollup_partial_threshold_keeps_table_findings():
+    """Below-100% threshold emits a schema finding alongside table findings."""
+    now = datetime.now(timezone.utc)
+    records = [
+        UsageRecord("main", "active", now - timedelta(days=1)),
+        UsageRecord("main", "unused_a", None),
+        UsageRecord("main", "unused_b", None),
+    ]
+    adapter = FakeUsageAdapter(records)
+    findings = check_usage(
+        cast(Any, adapter),
+        ["main"],
+        _config(rollup_schemas=True, schema_unused_threshold_pct=50.0),
+    )
+    by_table = {f.table_name for f in findings}
+    assert by_table == {"*", "unused_a", "unused_b"}
+    schema_finding = next(f for f in findings if f.table_name == "*")
+    assert "Mostly unused schema: main" in schema_finding.description
+    assert schema_finding.details["inactive_pct"] == 66.7
+    assert schema_finding.details["last_activity_at"] is not None
+
+
+def test_rollup_multiple_schemas():
+    """Only fully-inactive schemas roll up; healthy schemas keep table findings."""
+    now = datetime.now(timezone.utc)
+    records = [
+        UsageRecord("dead", "t1", None),
+        UsageRecord("dead", "t2", None),
+        UsageRecord("live", "active", now - timedelta(days=1)),
+        UsageRecord("live", "unused", None),
+    ]
+    adapter = FakeUsageAdapter(records)
+    findings = check_usage(
+        cast(Any, adapter), ["dead", "live"], _config(rollup_schemas=True)
+    )
+    assert len(findings) == 2
+    by_schema = {(f.schema_name, f.table_name) for f in findings}
+    assert by_schema == {("dead", "*"), ("live", "unused")}
+
+
+def test_rollup_table_list_capped():
+    """Schema finding embeds at most ROLLUP_TABLE_LIST_CAP table names."""
+    n = ROLLUP_TABLE_LIST_CAP + 5
+    records = [UsageRecord("dead", f"t{i:03d}", None) for i in range(n)]
+    adapter = FakeUsageAdapter(records)
+    findings = check_usage(
+        cast(Any, adapter), ["dead"], _config(rollup_schemas=True)
+    )
+    assert len(findings) == 1
+    details = findings[0].details
+    assert details["table_count"] == n
+    assert len(details["tables"]) == ROLLUP_TABLE_LIST_CAP
+    assert details["tables_truncated"] is True
+
+
+def test_classify_table_usage():
+    """Tables are classified active/stale/unused, sorted by schema and table."""
+    now = datetime.now(timezone.utc)
+    records = [
+        UsageRecord("main", "stale", now - timedelta(days=45)),
+        UsageRecord("main", "active", now - timedelta(days=2)),
+    ]
+    adapter = FakeUsageAdapter(records)
+    statuses = classify_table_usage(
+        cast(Any, adapter),
+        ["main"],
+        _config(),
+        all_tables=[("main", "orphan")],
+    )
+    assert [(s.table_name, s.status) for s in statuses] == [
+        ("active", "active"),
+        ("orphan", "unused"),
+        ("stale", "stale"),
+    ]
+    assert statuses[1].last_queried_at is None
+    assert statuses[2].days_unused is not None and statuses[2].days_unused > 40
+
+
+def test_summarize_schema_usage():
+    """Summaries aggregate counts per schema, most inactive first."""
+    now = datetime.now(timezone.utc)
+    records = [
+        UsageRecord("dead", "t1", None),
+        UsageRecord("mixed", "active", now - timedelta(days=1)),
+        UsageRecord("mixed", "stale", now - timedelta(days=50)),
+    ]
+    adapter = FakeUsageAdapter(records)
+    statuses = classify_table_usage(cast(Any, adapter), ["dead", "mixed"], _config())
+    summaries = summarize_schema_usage(statuses)
+    assert [s.schema_name for s in summaries] == ["dead", "mixed"]
+
+    dead, mixed = summaries
+    assert dead.total_tables == 1
+    assert dead.unused_count == 1
+    assert dead.inactive_pct == 100.0
+    assert dead.fully_inactive is True
+    assert dead.last_activity_at is None
+
+    assert mixed.total_tables == 2
+    assert mixed.active_count == 1
+    assert mixed.stale_count == 1
+    assert mixed.inactive_pct == 50.0
+    assert mixed.fully_inactive is False
+    assert mixed.last_activity_at is not None
+
+
+def test_build_usage_findings_empty_statuses():
+    """No statuses produce no findings, with or without rollup."""
+    assert build_usage_findings([], _config(rollup_schemas=True)) == []

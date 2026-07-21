@@ -34,9 +34,51 @@ export function UsagePage() {
 
   const { stats, usage_findings, cost_summary, cost_daily, least_used } = data;
 
+  const schemaFindings = usage_findings.filter((f) => f.details.scope === "schema");
+  const tableFindings = usage_findings.filter((f) => f.details.scope !== "schema");
+
   const PAGE_SIZE = 25;
-  const usageTotalPages = Math.ceil(usage_findings.length / PAGE_SIZE);
-  const pagedFindings = usage_findings.slice((usagePage - 1) * PAGE_SIZE, usagePage * PAGE_SIZE);
+  const usageTotalPages = Math.ceil(tableFindings.length / PAGE_SIZE);
+  const pagedFindings = tableFindings.slice((usagePage - 1) * PAGE_SIZE, usagePage * PAGE_SIZE);
+
+  const schemaFindingsColumns: Column<Finding>[] = [
+    { key: "schema", header: "Schema", render: (f) => f.schema_name },
+    {
+      key: "tables",
+      header: "Tables",
+      render: (f) => String(f.details.table_count ?? "—"),
+    },
+    {
+      key: "unused",
+      header: "Unused",
+      render: (f) => String(f.details.unused_count ?? "—"),
+    },
+    {
+      key: "stale",
+      header: "Stale",
+      render: (f) => String(f.details.stale_count ?? "—"),
+    },
+    {
+      key: "inactive_pct",
+      header: "% Inactive",
+      render: (f) =>
+        f.details.inactive_pct != null ? (
+          <Badge type={(f.details.inactive_pct as number) >= 100 ? "unused" : "stale"}>
+            {Math.round(f.details.inactive_pct as number)}%
+          </Badge>
+        ) : (
+          "—"
+        ),
+    },
+    {
+      key: "last_activity",
+      header: "Last Activity",
+      render: (f) =>
+        f.details.last_activity_at
+          ? String(f.details.last_activity_at).slice(0, 10)
+          : "—",
+    },
+  ];
 
   const usageFindingsColumns: Column<Finding>[] = [
     {
@@ -125,6 +167,9 @@ export function UsagePage() {
       <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-4">Usage &amp; Cost</h1>
 
       <StatsRow>
+        {stats.unused_schema_count > 0 && (
+          <StatCard value={stats.unused_schema_count} label="Unused Schemas" variant="error" />
+        )}
         <StatCard value={stats.unused_count} label="Unused Tables" variant="error" />
         <StatCard value={stats.stale_count} label="Stale Tables" variant="warning" />
         {stats.total_cost_usd != null && (
@@ -176,16 +221,32 @@ export function UsagePage() {
         </section>
       )}
 
+      {schemaFindings.length > 0 && (
+        <section className="mb-6">
+          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
+            Unused Schemas
+            <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+              ({schemaFindings.length})
+            </span>
+          </h2>
+          <DataTable
+            data={schemaFindings}
+            columns={schemaFindingsColumns}
+            rowKey={(f) => `${f.connection_name}.${f.schema_name}`}
+          />
+        </section>
+      )}
+
       <section className="mb-6">
         <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">
           Unused &amp; Stale Tables
-          {usage_findings.length > 0 && (
+          {tableFindings.length > 0 && (
             <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
-              ({usage_findings.length})
+              ({tableFindings.length})
             </span>
           )}
         </h2>
-        {usage_findings.length > 0 ? (
+        {tableFindings.length > 0 ? (
           <>
             <DataTable
               data={pagedFindings}

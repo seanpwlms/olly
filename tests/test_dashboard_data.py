@@ -252,18 +252,47 @@ def test_get_usage_findings():
 
 def test_get_usage_stats():
     usage_findings = [
-        Finding("usage", "error", "main", "t1", "Unused"),
-        Finding("usage", "error", "main", "t2", "Unused"),
-        Finding("usage", "warning", "main", "t3", "Stale"),
+        Finding(
+            "usage", "warning", "main", "t1", "Unused",
+            details={"last_queried_at": None},
+        ),
+        Finding(
+            "usage", "warning", "main", "t2", "Unused",
+            details={"last_queried_at": None},
+        ),
+        Finding(
+            "usage", "warning", "main", "t3", "Stale",
+            details={"last_queried_at": "2026-06-01T00:00:00", "days_unused": 50.0},
+        ),
+        Finding(
+            "usage", "warning", "dead", "*", "Unused schema",
+            details={"scope": "schema", "table_count": 5},
+        ),
     ]
     cost_summary = {"total_cost_usd": 42.50}
     stats = get_usage_stats(usage_findings, cost_summary)
     assert stats.unused_count == 2
     assert stats.stale_count == 1
+    assert stats.unused_schema_count == 1
     assert stats.total_cost_usd == 42.50
 
     stats_no_cost = get_usage_stats(usage_findings, None)
     assert stats_no_cost.total_cost_usd is None
+
+
+def test_get_usage_findings_schema_rollups_first():
+    findings = [
+        Finding("usage", "warning", "main", "t1", "Stale"),
+        Finding("schema", "warning", "main", "t2", "Column added"),
+        Finding(
+            "usage", "warning", "dead", "*", "Unused schema",
+            details={"scope": "schema"},
+        ),
+    ]
+    result = get_usage_findings(findings)
+    assert len(result) == 2
+    assert result[0].table_name == "*"
+    assert result[1].table_name == "t1"
 
 
 def test_build_cost_summary(tmp_path):

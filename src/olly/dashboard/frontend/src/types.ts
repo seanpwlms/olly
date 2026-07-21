@@ -147,6 +147,7 @@ export interface TableRow {
 export interface UsageStats {
   unused_count: number;
   stale_count: number;
+  unused_schema_count: number;
   total_cost_usd: number | null;
 }
 
