@@ -111,6 +111,11 @@ class UsageConfig:
     lookback_days: int = 90
     unused_threshold_days: int = 30
     bigquery_region: str = "us"
+    # Schema rollup: collapse fully-inactive schemas into one finding
+    rollup_schemas: bool = True
+    # Also emit a schema finding when this % of tables is inactive (<100
+    # keeps per-table findings alongside the schema-level one)
+    schema_unused_threshold_pct: float = 100.0
     # Cost monitoring fields (formerly [cost] section)
     severity: str = "warning"
     cost_enabled: bool = False
@@ -328,6 +333,10 @@ def load_config(path: Path | None = None) -> OllyConfig:
         unused_threshold_days=usage_raw.get("unused_threshold_days", 30),
         bigquery_region=usage_raw.get(
             "bigquery_region", cost_raw.get("bigquery_region", "us")
+        ),
+        rollup_schemas=usage_raw.get("rollup_schemas", True),
+        schema_unused_threshold_pct=usage_raw.get(
+            "schema_unused_threshold_pct", 100.0
         ),
         cost_enabled=usage_raw.get("cost_enabled", cost_raw.get("enabled", False)),
         cost_lookback_days=usage_raw.get(

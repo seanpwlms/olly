@@ -174,23 +174,49 @@ def get_dbt_node_timeseries(
 class UsageStats:
     unused_count: int
     stale_count: int
+    unused_schema_count: int
     total_cost_usd: float | None
 
 
+def _is_schema_scope(finding: Finding) -> bool:
+    return finding.details.get("scope") == "schema"
+
+
 def get_usage_findings(findings: list[Finding]) -> list[Finding]:
-    """Filter findings to usage check type, sorted by severity (errors first)."""
+    """Filter findings to usage check type.
+
+    Schema-level rollup findings sort first, then by severity (errors first).
+    """
     usage = [f for f in findings if f.check_type == "usage"]
     severity_order = {"error": 0, "warning": 1}
-    return sorted(usage, key=lambda f: severity_order.get(f.severity, 2))
+    return sorted(
+        usage,
+        key=lambda f: (
+            0 if _is_schema_scope(f) else 1,
+            severity_order.get(f.severity, 2),
+        ),
+    )
 
 
 def get_usage_stats(
     usage_findings: list[Finding], cost_summary: dict | None
 ) -> UsageStats:
-    """Compute summary stats for the usage page."""
+    """Compute summary stats for the usage page.
+
+    Unused vs. stale is determined by ``details.last_queried_at`` (absent
+    for unused tables), matching how the UI badges findings — severity is
+    a single configured value for all usage findings, so it can't
+    distinguish the two. Schema-level rollup findings are counted
+    separately from per-table counts.
+    """
+    table_findings = [f for f in usage_findings if not _is_schema_scope(f)]
+    unused = sum(
+        1 for f in table_findings if f.details.get("last_queried_at") is None
+    )
     return UsageStats(
-        unused_count=sum(1 for f in usage_findings if f.severity == "error"),
-        stale_count=sum(1 for f in usage_findings if f.severity == "warning"),
+        unused_count=unused,
+        stale_count=len(table_findings) - unused,
+        unused_schema_count=sum(1 for f in usage_findings if _is_schema_scope(f)),
         total_cost_usd=cost_summary["total_cost_usd"] if cost_summary else None,
     )
 

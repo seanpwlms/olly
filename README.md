@@ -122,7 +122,7 @@ use_information_schema_row_counts = true     # optional, default true
 type = "snowflake"
 account = "my-account"
 database = "my_db"                          # optional
-use_account_usage = false                   # optional, default false
+use_account_usage = false                   # optional, default false; required for usage checks
 user = "my-user"                            # optional, forwarded to Ibis
 role = "ANALYST"                            # optional, forwarded to Ibis
 warehouse = "COMPUTE_WH"                    # optional, forwarded to Ibis
@@ -275,17 +275,23 @@ min_history_for_anomaly = 5    # minimum runs before performance checks activate
 
 ### Table usage monitoring
 
-Detect tables that haven't been queried recently. Currently supported on BigQuery only (uses `INFORMATION_SCHEMA.JOBS_BY_PROJECT`).
+Detect tables — and entire schemas — that haven't been queried recently. Supported on:
+
+- **BigQuery** — uses `INFORMATION_SCHEMA.JOBS_BY_PROJECT` (query history is project-scoped)
+- **Postgres 16+** — uses `pg_stat_user_tables` scan timestamps
+- **Snowflake** — uses `SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY`; requires `use_account_usage = true` on the connection and an Enterprise Edition account
 
 ```toml
 [usage]
 enabled = true
-lookback_days = 90          # how far back to scan query history
-unused_threshold_days = 30  # days without queries before flagging
+lookback_days = 90               # how far back to scan query history
+unused_threshold_days = 30       # days without queries before flagging
 bigquery_region = "us"
+rollup_schemas = true            # collapse fully-inactive schemas into one finding
+schema_unused_threshold_pct = 100.0  # also flag schemas with >= this % inactive tables
 ```
 
-Tables with no queries in the lookback window are flagged as errors. Tables queried but not within the unused threshold are warnings.
+Tables with no queries in the lookback window are flagged as unused; tables last queried beyond the threshold are stale. When every table in a schema is inactive, the per-table findings collapse into a single schema-level finding. Lowering `schema_unused_threshold_pct` also flags "mostly unused" schemas while keeping their per-table findings.
 
 ### Query cost monitoring
 

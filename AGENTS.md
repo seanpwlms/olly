@@ -221,7 +221,7 @@ Override fields:
 - `[integrity]` — `module` pointing to a Python file exporting a `syncs` list of `Sync` dataclasses
 - `[contracts]` — `module` pointing to a Python file defining `TableContract` subclasses
 - `[dbt]` — `run_results_path`, `include_skipped`
-- `[usage]` — `enabled`, `lookback_days`, `unused_threshold_days`, `bigquery_region`
+- `[usage]` — `enabled`, `lookback_days`, `unused_threshold_days`, `bigquery_region`, `rollup_schemas` (collapse fully-inactive schemas into one finding, default true), `schema_unused_threshold_pct` (also flag schemas with ≥ this % inactive tables, default 100)
 - `[cost]` — `enabled`, `lookback_days`, `bigquery_region`, `price_per_tb_usd`, `spike_threshold`
 - `[slack]` — `webhook_url`, `on_error`, `on_warning`
 

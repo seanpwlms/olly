@@ -77,6 +77,31 @@ class UsageRecord:
 
 
 @dataclass
+class TableUsageStatus:
+    """Classified usage state for a single table."""
+
+    schema_name: str
+    table_name: str
+    status: str  # "active", "stale", "unused"
+    last_queried_at: datetime | None
+    days_unused: float | None  # None when never queried in the lookback window
+
+
+@dataclass
+class SchemaUsageSummary:
+    """Aggregated usage state for all tables in a schema."""
+
+    schema_name: str
+    total_tables: int
+    active_count: int
+    stale_count: int
+    unused_count: int
+    inactive_pct: float  # percentage of tables that are stale or unused
+    last_activity_at: datetime | None  # most recent query anywhere in the schema
+    fully_inactive: bool
+
+
+@dataclass
 class CostRecord:
     """Query cost data aggregated per table and user from warehouse metadata."""
 

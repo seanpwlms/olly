@@ -18,11 +18,13 @@ from pathlib import Path
 
 import duckdb
 
-from olly.config import OllyConfig
+from olly.checks.usage import build_usage_findings
+from olly.config import OllyConfig, UsageConfig
 from olly.models import (
     ColumnInfo,
     CostRecord,
     TableInfo,
+    TableUsageStatus,
     VolumeRecord,
 )
 from olly.state import StateDB, get_olly_dir
@@ -901,6 +903,84 @@ def _populate_warehouse() -> None:
     """)
 
     conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Usage findings
+# ---------------------------------------------------------------------------
+
+
+def seed_usage_findings(state_db: StateDB) -> None:
+    """Insert synthetic usage findings into the latest check batch.
+
+    DuckDB exposes no query history, so live checks can't produce usage
+    findings. These simulate what a warehouse with query history would
+    emit — a few unused/stale tables in ``main`` plus a fully-inactive
+    ``legacy_reporting`` schema that rolls up into a single finding.
+    Statuses run through the real ``build_usage_findings()`` so
+    descriptions and details match production output exactly.
+
+    Findings are inserted with the same ``created_at`` as the most recent
+    check run so ``get_latest_findings()`` includes them.
+    """
+    now = datetime.now(timezone.utc)
+
+    def _status(
+        schema: str, table: str, status: str, days_unused: float | None,
+    ) -> TableUsageStatus:
+        last_queried = (
+            now - timedelta(days=days_unused) if days_unused is not None else None
+        )
+        return TableUsageStatus(schema, table, status, last_queried, days_unused)
+
+    statuses = [
+        # main: mostly healthy, a few inactive -> per-table findings
+        _status(SCHEMA_NAME, "orders", "active", 0.1),
+        _status(SCHEMA_NAME, "customers", "active", 0.4),
+        _status(SCHEMA_NAME, "payments", "active", 0.8),
+        _status(SCHEMA_NAME, "order_items", "active", 0.2),
+        _status(SCHEMA_NAME, "customer_sessions", "active", 0.1),
+        _status(SCHEMA_NAME, "shipments", "active", 1.5),
+        _status(SCHEMA_NAME, "reviews", "active", 3.2),
+        _status(SCHEMA_NAME, "products", "active", 2.1),
+        _status(SCHEMA_NAME, "categories", "unused", None),
+        _status(SCHEMA_NAME, "suppliers", "stale", 41.0),
+        _status(SCHEMA_NAME, "inventory", "stale", 33.5),
+        # legacy_reporting: fully inactive -> one schema-level rollup finding
+        _status("legacy_reporting", "daily_kpis_2019", "unused", None),
+        _status("legacy_reporting", "email_campaign_stats", "unused", None),
+        _status("legacy_reporting", "quarterly_rollup", "stale", 65.0),
+        _status("legacy_reporting", "vendor_scorecards", "unused", None),
+        _status("legacy_reporting", "weekly_exec_summary", "stale", 112.0),
+    ]
+    findings = build_usage_findings(
+        statuses,
+        UsageConfig(enabled=True, lookback_days=90, unused_threshold_days=30),
+    )
+
+    created_at = state_db.get_last_check_time() or now.isoformat()
+    for f in findings:
+        state_db._execute(
+            f"INSERT INTO {state_db._table('findings')} "
+            "(created_at, connection_name, check_type, severity, "
+            "schema_name, table_name, description, details) "
+            "VALUES (:created_at, :connection_name, :check_type, :severity, "
+            ":schema_name, :table_name, :description, :details)",
+            {
+                "created_at": created_at,
+                "connection_name": "primary",
+                "check_type": f.check_type,
+                "severity": f.severity,
+                "schema_name": f.schema_name,
+                "table_name": f.table_name,
+                "description": f.description,
+                "details": json.dumps(f.details),
+            },
+        )
+    print(
+        f"Seeded {len(findings)} usage findings "
+        "(incl. schema rollup for 'legacy_reporting')"
+    )
 
 
 # ---------------------------------------------------------------------------

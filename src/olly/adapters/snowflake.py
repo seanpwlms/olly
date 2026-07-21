@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 import ibis
 
 from olly.adapters.base import BaseAdapter
-from olly.models import ColumnInfo, TableInfo, VolumeRecord
+from olly.models import ColumnInfo, TableInfo, UsageRecord, VolumeRecord
 
 if TYPE_CHECKING:
     from olly.adapter import ProgressCallback
@@ -48,6 +48,11 @@ class SnowflakeAdapter(BaseAdapter):
             database=self._default_database,
             **connect_kwargs,
         )
+
+    @property
+    def SUPPORTS_USAGE_HISTORY(self) -> bool:
+        """Query history is only available via ACCOUNT_USAGE views."""
+        return self._use_account_usage
 
     def _get_ibis_table(self, schema_name: str, table_name: str) -> Any:
         database, schema = _split_schema(schema_name)
@@ -287,6 +292,86 @@ class SnowflakeAdapter(BaseAdapter):
                     raise RuntimeError(
                         f"Failed to fetch row count for {ti.schema_name}.{ti.table_name}"
                     ) from exc
+        return records
+
+    def fetch_table_usage(
+        self,
+        schemas: list[str],
+        lookback_days: int,
+        region: str = "us",
+    ) -> list[UsageRecord]:
+        """Query SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY for table access history.
+
+        Requires ``use_account_usage = true``; ACCESS_HISTORY is an
+        Enterprise Edition feature and lags real activity by up to a few
+        hours. Both direct queries against tables and view accesses count
+        as usage.
+
+        Args:
+            schemas: Schema names as ``"database.schema"`` strings.
+            lookback_days: How many days of query history to analyze.
+            region: Ignored (BigQuery compatibility).
+
+        Returns:
+            A list of ``UsageRecord`` objects with the last query timestamp
+            per table. Tables never queried in the lookback window have
+            ``last_queried_at=None``.
+        """
+        if not schemas:
+            return []
+        if not self._use_account_usage:
+            logger.warning(
+                "Snowflake usage check requires use_account_usage = true; skipping"
+            )
+            return []
+
+        schema_filter = ", ".join(
+            f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schemas
+        )
+        sql = (
+            "SELECT object_name, MAX(query_start_time) AS last_queried_at "
+            "FROM ("
+            'SELECT f.value:"objectName"::STRING AS object_name, '
+            "ah.query_start_time "
+            "FROM SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY ah, "
+            "LATERAL FLATTEN(input => ah.direct_objects_accessed) f "
+            "WHERE ah.query_start_time >= "
+            f"DATEADD(DAY, -{int(lookback_days)}, CURRENT_TIMESTAMP()) "
+            "AND f.value:\"objectDomain\"::STRING IN ('Table', 'View')"
+            ") "
+            "WHERE SPLIT_PART(object_name, '.', 1) || '.' || "
+            f"SPLIT_PART(object_name, '.', 2) IN ({schema_filter}) "
+            "GROUP BY object_name"
+        )
+
+        try:
+            result = self._raw_sql(sql)
+            rows = result.fetchall()
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to fetch table usage from "
+                "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY"
+            ) from exc
+
+        usage_map: dict[tuple[str, str], datetime] = {}
+        for object_name, last_queried_at in rows:
+            if last_queried_at is None:
+                continue
+            parts = str(object_name).split(".")
+            if len(parts) != 3:
+                continue  # quoted identifiers containing dots are unsupported
+            usage_map[(f"{parts[0]}.{parts[1]}", parts[2])] = last_queried_at
+
+        records = []
+        for table in self.fetch_schema_info(schemas):
+            key = (table.schema_name, table.table_name)
+            records.append(
+                UsageRecord(
+                    schema_name=table.schema_name,
+                    table_name=table.table_name,
+                    last_queried_at=usage_map.get(key),
+                )
+            )
         return records
 
     def fetch_max_timestamp(

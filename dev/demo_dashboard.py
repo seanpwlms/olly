@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from seed_dashboard_data import seed_rich_dashboard_data
+from seed_dashboard_data import seed_rich_dashboard_data, seed_usage_findings
 from seed_db import (
     DEV_DIR,
     drift,
@@ -22,6 +22,7 @@ from seed_db import (
 )
 
 from olly.results import write_findings_json
+from olly.state import StateDB, get_olly_dir
 
 
 def main() -> None:
@@ -42,6 +43,13 @@ def main() -> None:
     findings_path = write_findings_json(findings, dbt_findings=dbt_findings)
     print(f"\nWrote {len(findings)} findings to {findings_path}")
 
+    # 5. Add synthetic usage findings (DuckDB has no query history)
+    state_db = StateDB(get_olly_dir() / "state.db")
+    try:
+        seed_usage_findings(state_db)
+    finally:
+        state_db.close()
+
     for f in findings:
         print(
             f"  [{f.severity}] {f.check_type}: {f.schema_name}.{f.table_name} — {f.description}"
@@ -51,7 +59,7 @@ def main() -> None:
         print("\nDone. Run 'cd dev && uv run olly serve' to start the dashboard.")
         return
 
-    # 5. Start the dashboard
+    # 6. Start the dashboard
     print("\nStarting dashboard at http://127.0.0.1:8000 ...")
     from olly.cli.serve import run_serve
 

@@ -342,3 +342,79 @@ class TestScalarEdgeCases:
 
     def test_scalar_str_empty(self):
         assert make_snowflake_adapter(rows_per_call=[[]])._fetch_scalar_str("Q", "t") is None
+
+
+# ---------------------------------------------------------------------------
+# fetch_table_usage (ACCOUNT_USAGE.ACCESS_HISTORY)
+# ---------------------------------------------------------------------------
+
+
+class TestFetchTableUsage:
+    def test_supports_usage_history_tracks_account_usage_flag(self):
+        assert make_snowflake_adapter().SUPPORTS_USAGE_HISTORY is False
+        assert (
+            make_snowflake_adapter(use_account_usage=True).SUPPORTS_USAGE_HISTORY
+            is True
+        )
+
+    def test_returns_records_with_none_for_unqueried_tables(self):
+        ts = datetime(2026, 7, 1, 12, 0, 0)
+        adapter = make_snowflake_adapter(
+            rows_per_call=[
+                # access history: only ORDERS was queried
+                [("MYDB.PUBLIC.ORDERS", ts)],
+                # fetch_schema_info: table metadata
+                [
+                    ("MYDB", "PUBLIC", "ORDERS", "BASE TABLE"),
+                    ("MYDB", "PUBLIC", "DEAD", "BASE TABLE"),
+                ],
+                # fetch_schema_info: columns
+                [
+                    ("MYDB", "PUBLIC", "ORDERS", "ID", "NUMBER", "YES"),
+                    ("MYDB", "PUBLIC", "DEAD", "ID", "NUMBER", "YES"),
+                ],
+            ],
+            use_account_usage=True,
+        )
+        records = adapter.fetch_table_usage(["MYDB.PUBLIC"], lookback_days=90)
+        by_table = {(r.schema_name, r.table_name): r.last_queried_at for r in records}
+        assert by_table == {
+            ("MYDB.PUBLIC", "ORDERS"): ts,
+            ("MYDB.PUBLIC", "DEAD"): None,
+        }
+
+        usage_sql = adapter._conn.queries[0]
+        assert "SNOWFLAKE.ACCOUNT_USAGE.ACCESS_HISTORY" in usage_sql
+        assert "DATEADD(DAY, -90, CURRENT_TIMESTAMP())" in usage_sql
+        assert "IN ('MYDB.PUBLIC')" in usage_sql
+        assert "LATERAL FLATTEN" in usage_sql
+
+    def test_skips_malformed_object_names(self):
+        ts = datetime(2026, 7, 1)
+        adapter = make_snowflake_adapter(
+            rows_per_call=[
+                [("not_qualified", ts), ("MYDB.PUBLIC", ts)],
+                [("MYDB", "PUBLIC", "T1", "BASE TABLE")],
+                [("MYDB", "PUBLIC", "T1", "ID", "NUMBER", "YES")],
+            ],
+            use_account_usage=True,
+        )
+        records = adapter.fetch_table_usage(["MYDB.PUBLIC"], lookback_days=30)
+        assert len(records) == 1
+        assert records[0].last_queried_at is None
+
+    def test_without_account_usage_returns_empty(self):
+        adapter = make_snowflake_adapter()
+        assert adapter.fetch_table_usage(["MYDB.PUBLIC"], lookback_days=90) == []
+        assert adapter._conn.queries == []
+
+    def test_empty_schemas_returns_empty(self):
+        adapter = make_snowflake_adapter(use_account_usage=True)
+        assert adapter.fetch_table_usage([], lookback_days=90) == []
+        assert adapter._conn.queries == []
+
+    def test_query_error_raises_runtime_error(self):
+        adapter = make_snowflake_error_adapter()
+        adapter._use_account_usage = True
+        with pytest.raises(RuntimeError, match="ACCESS_HISTORY"):
+            adapter.fetch_table_usage(["MYDB.PUBLIC"], lookback_days=90)

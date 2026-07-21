@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -49,6 +50,28 @@ def test_run_unused_with_findings(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "dead_table" in output
     assert "1 warning(s)" in output
+    assert "Schema Summary" in output
+
+
+def test_run_unused_fully_inactive_schema_rolls_up(tmp_path, monkeypatch, capsys):
+    """A schema with only inactive tables collapses into one schema finding."""
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+
+    records = [
+        UsageRecord("public", "dead_a", None),
+        UsageRecord("public", "dead_b", None),
+    ]
+
+    with patch(
+        "olly.cli.unused.connect_typed", return_value=FakeUsageAdapter(records)
+    ):
+        run_unused()
+
+    output = capsys.readouterr().out
+    assert "public.*" in output  # schema rollup row in the findings table
+    assert "Unused schema" in output
+    assert "1 warning(s)" in output
 
 
 def test_run_unused_no_findings(tmp_path, monkeypatch, capsys):
@@ -81,3 +104,10 @@ def test_run_unused_json_output(tmp_path, monkeypatch, capsys):
     output = capsys.readouterr().out
     assert '"findings"' in output
     assert "dead_table" in output
+    data = json.loads(output)
+    assert data["schema_summaries"][0]["schema_name"] == "public"
+    assert data["schema_summaries"][0]["fully_inactive"] is True
+    assert data["schema_summaries"][0]["connection_name"] == "primary"
+    # single dead table rolls up into a schema-level finding
+    assert data["findings"][0]["table_name"] == "*"
+    assert data["findings"][0]["details"]["scope"] == "schema"
