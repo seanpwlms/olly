@@ -284,11 +284,23 @@ def test_volume_zero_to_nonzero(state_db):
     # First data appears - triggers anomaly because std dev = 0
     current = [make_volume_record("main", "t",100)]
     findings = check_volume(current, state_db, Settings())
-    # Any deviation from constant history (std dev = 0) produces infinite z-score
+    # Any deviation from constant history (std dev = 0) produces a finding
     assert len(findings) == 1
     assert findings[0].check_type == "volume"
-    # Z-score will be very large (approaching infinity)
-    assert findings[0].details["z_score"] > 1000
+
+
+def test_volume_zero_variance_message(state_db):
+    """Sentinel z-score must not leak into the user-facing description."""
+    for _ in range(5):
+        sid = state_db.create_snapshot()
+        state_db.store_volume_data(sid, [make_volume_record("main", "t", 1000)])
+
+    current = [make_volume_record("main", "t", 5000)]
+    findings = check_volume(current, state_db, Settings())
+    assert len(findings) == 1
+    assert "1000000" not in findings[0].description
+    assert "zero-variance" in findings[0].description.lower()
+    assert findings[0].details["z_score"] is None
 
 
 # --- Freshness checks (integration with Ibis) ---

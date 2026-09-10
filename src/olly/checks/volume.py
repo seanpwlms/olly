@@ -10,6 +10,8 @@ from olly.state import BaseStateStore
 
 logger = logging.getLogger(__name__)
 
+ZERO_VARIANCE_SENTINEL = 1e6
+
 
 def check_volume(
     current: list[VolumeRecord],
@@ -65,20 +67,29 @@ def check_volume(
 
         if score is not None and abs(score) > threshold:
             direction = "increase" if score > 0 else "decrease"
+            zero_variance = abs(score) >= ZERO_VARIANCE_SENTINEL
+            if zero_variance:
+                score_phrase = "zero-variance baseline; any change is anomalous"
+                details_score: float | None = None
+                severity = "error"
+            else:
+                score_phrase = f"z-score: {score:+.2f}"
+                details_score = round(score, 2)
+                severity = "warning" if abs(score) < threshold * 2 else "error"
             findings.append(
                 Finding(
                     check_type="volume",
-                    severity="warning" if abs(score) < threshold * 2 else "error",
+                    severity=severity,
                     schema_name=vol.schema_name,
                     table_name=vol.table_name,
                     description=(
                         f"Row count anomaly ({direction}): "
                         f"{vol.schema_name}.{vol.table_name} "
-                        f"({vol.row_count:,} rows, z-score: {score:+.2f})"
+                        f"({vol.row_count:,} rows, {score_phrase})"
                     ),
                     details={
                         "current_count": vol.row_count,
-                        "z_score": round(score, 2),
+                        "z_score": details_score,
                         "threshold": threshold,
                         "method": method,
                         "history_mean": round(statistics.mean(baseline_history), 2),
