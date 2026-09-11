@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, cast
 
 import pytest
@@ -418,3 +418,97 @@ class TestFetchTableUsage:
         adapter._use_account_usage = True
         with pytest.raises(RuntimeError, match="ACCESS_HISTORY"):
             adapter.fetch_table_usage(["MYDB.PUBLIC"], lookback_days=90)
+
+
+# ---------------------------------------------------------------------------
+# fetch_last_modified
+# ---------------------------------------------------------------------------
+
+
+class TestFetchLastModified:
+    def _infos(self, *names, schema="MYDB.PUBLIC", table_type="TABLE"):
+        return [
+            TableInfo(
+                schema_name=schema, table_name=n, table_type=table_type, columns=[]
+            )
+            for n in names
+        ]
+
+    def test_reads_last_altered_from_information_schema(self):
+        ts = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+        adapter = make_snowflake_adapter(
+            [[("MYDB", "PUBLIC", "orders", ts)]]
+        )
+        result = adapter.fetch_last_modified(self._infos("orders"))
+        assert result == {("MYDB.PUBLIC", "orders"): ts}
+        sql = adapter._conn.queries[0]
+        assert "LAST_ALTERED" in sql
+        assert "INFORMATION_SCHEMA.TABLES" in sql
+
+    def test_uses_account_usage_when_enabled(self):
+        ts = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+        adapter = make_snowflake_adapter(
+            [[("MYDB", "PUBLIC", "orders", ts)]], use_account_usage=True
+        )
+        adapter.fetch_last_modified(self._infos("orders"))
+        sql = adapter._conn.queries[0]
+        assert "SNOWFLAKE.ACCOUNT_USAGE.TABLES" in sql
+        assert "DELETED IS NULL" in sql
+
+    def test_one_query_per_database(self):
+        ts = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+        adapter = make_snowflake_adapter(
+            [
+                [("DB1", "PUBLIC", "a", ts)],
+                [("DB2", "PUBLIC", "b", ts)],
+            ]
+        )
+        infos = self._infos("a", schema="DB1.PUBLIC") + self._infos(
+            "b", schema="DB2.PUBLIC"
+        )
+        result = adapter.fetch_last_modified(infos)
+        assert len(result) == 2
+        assert len(adapter._conn.queries) == 2
+
+    def test_batches_schemas_within_one_database(self):
+        ts = datetime(2026, 3, 1, 12, 0, tzinfo=timezone.utc)
+        adapter = make_snowflake_adapter(
+            [[("MYDB", "PUBLIC", "a", ts), ("MYDB", "RAW", "b", ts)]]
+        )
+        infos = self._infos("a", schema="MYDB.PUBLIC") + self._infos(
+            "b", schema="MYDB.RAW"
+        )
+        result = adapter.fetch_last_modified(infos)
+        assert len(result) == 2
+        assert len(adapter._conn.queries) == 1
+
+    def test_skips_views(self):
+        adapter = make_snowflake_adapter([[]])
+        result = adapter.fetch_last_modified(
+            self._infos("v1", table_type="VIEW")
+        )
+        assert result == {}
+        assert adapter._conn.queries == []
+
+    def test_null_last_altered_is_omitted(self):
+        adapter = make_snowflake_adapter([[("MYDB", "PUBLIC", "orders", None)]])
+        assert adapter.fetch_last_modified(self._infos("orders")) == {}
+
+    def test_naive_timestamp_assumed_utc(self):
+        adapter = make_snowflake_adapter(
+            [[("MYDB", "PUBLIC", "orders", datetime(2026, 3, 1, 12, 0))]]
+        )
+        result = adapter.fetch_last_modified(self._infos("orders"))
+        assert result[("MYDB.PUBLIC", "orders")].tzinfo is timezone.utc
+
+    def test_schema_name_is_escaped(self):
+        adapter = make_snowflake_adapter([[]])
+        adapter.fetch_last_modified(self._infos("t", schema="MYDB.O'BRIEN"))
+        assert "O''BRIEN" in adapter._conn.queries[0]
+
+    def test_query_failure_is_contained(self):
+        adapter = make_snowflake_error_adapter()
+        assert adapter.fetch_last_modified(self._infos("orders")) == {}
+
+    def test_declares_metadata_support(self):
+        assert make_snowflake_adapter().SUPPORTS_METADATA_FRESHNESS is True

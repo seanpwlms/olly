@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import ibis
 
-from olly.adapters.base import BaseAdapter
+from olly.adapters.base import BaseAdapter, coerce_datetime
 from olly.models import ColumnInfo, CostRecord, TableInfo, UsageRecord, VolumeRecord
 
 if TYPE_CHECKING:
@@ -23,6 +23,7 @@ class BigQueryAdapter(BaseAdapter):
     """
 
     SUPPORTS_USAGE_HISTORY = True
+    SUPPORTS_METADATA_FRESHNESS = True
 
     def __init__(
         self,
@@ -53,7 +54,7 @@ class BigQueryAdapter(BaseAdapter):
         )
         self._region = region
         self._use_information_schema_row_counts = use_information_schema_row_counts
-        self._metadata_cache: dict[str, dict[str, dict[str, int | str | None]]] = {}
+        self._metadata_cache: dict[str, dict[str, dict[str, Any]]] = {}
 
     # --- BigQuery raw_sql wrapper ---
 
@@ -167,12 +168,12 @@ class BigQueryAdapter(BaseAdapter):
 
     def _fetch_table_metadata(
         self, schema_name: str
-    ) -> dict[str, dict[str, int | str | None]]:
+    ) -> dict[str, dict[str, Any]]:
         """Query INFORMATION_SCHEMA for table types and row counts.
 
-        Table types come from ``TABLES``; row counts come from
-        ``TABLE_STORAGE`` via a LEFT JOIN so the query works even when
-        storage metadata is unavailable.
+        Table types come from ``TABLES``; row counts and last-modified times
+        come from ``TABLE_STORAGE`` via a LEFT JOIN so the query works even
+        when storage metadata is unavailable.
         """
         cached = self._metadata_cache.get(schema_name)
         if cached is not None:
@@ -182,7 +183,8 @@ class BigQueryAdapter(BaseAdapter):
             safe_schema = schema_name.replace("`", "")
             safe_region = self._region.replace("`", "")
             rows = self._execute_sql(
-                "SELECT t.table_name, t.table_type, s.total_rows "
+                "SELECT t.table_name, t.table_type, s.total_rows, "
+                "s.storage_last_modified_time "
                 f"FROM `{safe_schema}.INFORMATION_SCHEMA.TABLES` t "
                 f"LEFT JOIN `region-{safe_region}`.INFORMATION_SCHEMA.TABLE_STORAGE s "
                 f"ON t.table_schema = s.table_schema AND t.table_name = s.table_name"
@@ -192,16 +194,44 @@ class BigQueryAdapter(BaseAdapter):
                 f"Failed to read table metadata for schema {schema_name}"
             ) from exc
 
-        metadata: dict[str, dict[str, int | str | None]] = {}
-        for table_name, table_type, row_count in rows:
+        metadata: dict[str, dict[str, Any]] = {}
+        for table_name, table_type, row_count, last_modified in rows:
             metadata[str(table_name)] = {
                 "table_type": str(table_type).upper()
                 if table_type is not None
                 else None,
                 "row_count": row_count,
+                "last_modified": last_modified,
             }
         self._metadata_cache[schema_name] = metadata
         return metadata
+
+    def fetch_last_modified(
+        self, table_infos: list[TableInfo]
+    ) -> dict[tuple[str, str], datetime]:
+        """Return ``storage_last_modified_time`` per table from INFORMATION_SCHEMA.
+
+        Reads the per-dataset metadata cache populated during schema
+        introspection, so this issues at most one query per dataset and
+        usually none at all.
+        """
+        result: dict[tuple[str, str], datetime] = {}
+        for ti in table_infos:
+            if ti.table_type == "VIEW":
+                continue
+            try:
+                metadata = self._fetch_table_metadata(ti.schema_name)
+            except RuntimeError:
+                logger.warning(
+                    "Could not read last-modified metadata for schema %s",
+                    ti.schema_name,
+                )
+                continue
+            value = metadata.get(ti.table_name, {}).get("last_modified")
+            parsed = coerce_datetime(value)
+            if parsed is not None:
+                result[(ti.schema_name, ti.table_name)] = parsed
+        return result
 
     def _get_table_type(self, schema_name: str, table_name: str) -> str:
         """Look up whether a table is a TABLE or VIEW via INFORMATION_SCHEMA."""
@@ -478,3 +508,4 @@ class BigQueryAdapter(BaseAdapter):
                 )
             )
         return records
+

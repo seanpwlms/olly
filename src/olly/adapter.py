@@ -22,6 +22,9 @@ class Adapter(Protocol):
     SUPPORTS_USAGE_HISTORY: bool
     """Whether the adapter reports per-table query history."""
 
+    SUPPORTS_METADATA_FRESHNESS: bool
+    """Whether the adapter reports last-modified times from catalog metadata."""
+
     def list_schemas(self) -> list[str]:
         """Return all schema names in the warehouse."""
         ...
@@ -50,6 +53,17 @@ class Adapter(Protocol):
         self, schema_name: str, table_name: str, column: str
     ) -> datetime | None:
         """Return the maximum value of a timestamp column, or ``None``."""
+        ...
+
+    def fetch_last_modified(
+        self, table_infos: list[TableInfo]
+    ) -> dict[tuple[str, str], datetime]:
+        """Return last-modified times from catalog metadata, keyed by table.
+
+        Reads the warehouse's own catalog rather than scanning table data, so
+        the cost is a small fixed number of queries regardless of table count.
+        Tables with no metadata available are omitted from the mapping.
+        """
         ...
 
     def fetch_count(

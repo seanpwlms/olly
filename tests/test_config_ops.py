@@ -6,6 +6,7 @@ from olly.config import (
     IntegrityConfig,
     Override,
     Selection,
+    Settings,
 )
 from olly.config_ops import (
     filter_table_infos,
@@ -254,3 +255,46 @@ def test_validate_dbt_path_missing(tmp_path):
     )
     warnings = validate_config(config)
     assert any("does not exist" in w for w in warnings)
+
+
+# --- freshness_method resolution ---
+
+
+def test_freshness_method_resolves_from_global():
+    settings = Settings(freshness_method="metadata")
+    resolved = resolve_table_settings_with_sources(settings, [], "main", "orders")
+    assert resolved.freshness_method == "metadata"
+    assert resolved.freshness_method_source == "global"
+
+
+def test_freshness_method_override_precedence():
+    """Object-level override beats pattern, which beats schema."""
+    overrides = [
+        Override(match="main", freshness_method="metadata"),
+        Override(match="main.order_*", freshness_method="auto"),
+        Override(match="main.orders", freshness_method="column"),
+    ]
+    resolved = resolve_table_settings_with_sources(
+        Settings(), overrides, "main", "orders"
+    )
+    assert resolved.freshness_method == "column"
+    assert resolved.freshness_method_source == "object"
+
+
+def test_freshness_method_schema_level_override():
+    overrides = [Override(match="main", freshness_method="metadata")]
+    resolved = resolve_table_settings_with_sources(
+        Settings(), overrides, "main", "orders"
+    )
+    assert resolved.freshness_method == "metadata"
+    assert resolved.freshness_method_source == "schema"
+
+
+def test_freshness_method_unset_override_keeps_global():
+    overrides = [Override(match="main.orders", freshness_column="updated_at")]
+    resolved = resolve_table_settings_with_sources(
+        Settings(freshness_method="metadata"), overrides, "main", "orders"
+    )
+    assert resolved.freshness_method == "metadata"
+    assert resolved.freshness_method_source == "global"
+    assert resolved.freshness_column == "updated_at"

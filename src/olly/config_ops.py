@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from olly.config import (
+    FRESHNESS_METHODS,
     NamedConnection,
     Override,
     ResolvedTableSettings,
@@ -132,11 +133,13 @@ def resolve_table_settings_with_sources(
         for each setting.
     """
     freshness_column: str | None = None
+    freshness_method = settings.freshness_method
     freshness_threshold_hours = settings.freshness_threshold_hours
     volume_zscore_threshold = settings.volume_zscore_threshold
     volume_method = settings.volume_method
     sources = {
         "freshness_column": "global",
+        "freshness_method": "global",
         "freshness_threshold_hours": "global",
         "volume_zscore_threshold": "global",
         "volume_method": "global",
@@ -144,10 +147,14 @@ def resolve_table_settings_with_sources(
 
     def apply_override(override: Override, source: str) -> None:
         """Apply non-None fields from *override*, tagging each with *source*."""
-        nonlocal freshness_column, freshness_threshold_hours, volume_zscore_threshold, volume_method
+        nonlocal freshness_column, freshness_method, freshness_threshold_hours
+        nonlocal volume_zscore_threshold, volume_method
         if override.freshness_column is not None:
             freshness_column = override.freshness_column
             sources["freshness_column"] = source
+        if override.freshness_method is not None:
+            freshness_method = override.freshness_method
+            sources["freshness_method"] = source
         if override.freshness_threshold_hours is not None:
             freshness_threshold_hours = override.freshness_threshold_hours
             sources["freshness_threshold_hours"] = source
@@ -185,10 +192,12 @@ def resolve_table_settings_with_sources(
 
     return ResolvedTableSettings(
         freshness_column=freshness_column,
+        freshness_method=freshness_method,
         freshness_threshold_hours=freshness_threshold_hours,
         volume_zscore_threshold=volume_zscore_threshold,
         volume_method=volume_method,
         freshness_column_source=sources["freshness_column"],
+        freshness_method_source=sources["freshness_method"],
         freshness_threshold_hours_source=sources["freshness_threshold_hours"],
         volume_zscore_threshold_source=sources["volume_zscore_threshold"],
         volume_method_source=sources["volume_method"],
@@ -231,12 +240,28 @@ def validate_config(config: OllyConfig) -> list[str]:
                     " only schema or schema.table is supported."
                 )
             if (
+                override.freshness_method is not None
+                and override.freshness_method not in FRESHNESS_METHODS
+            ):
+                warnings.append(
+                    f"Override '{override.match}' has invalid freshness_method "
+                    f"'{override.freshness_method}' (expected one of "
+                    f"{sorted(FRESHNESS_METHODS)})."
+                )
+            if (
                 override.freshness_column is None
+                and override.freshness_method is None
                 and override.freshness_threshold_hours is None
                 and override.volume_zscore_threshold is None
                 and override.volume_method is None
             ):
                 warnings.append(f"Override '{override.match}' has no fields set.")
+
+    if config.settings.freshness_method not in FRESHNESS_METHODS:
+        warnings.append(
+            f"settings.freshness_method '{config.settings.freshness_method}' is "
+            f"invalid (expected one of {sorted(FRESHNESS_METHODS)})."
+        )
 
     if config.integrity.module is not None and not config.integrity.module.strip():
         warnings.append("integrity.module is set but empty.")

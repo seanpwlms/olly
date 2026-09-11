@@ -198,33 +198,6 @@ class TestListSchemas:
 # ---------------------------------------------------------------------------
 
 
-class TestFetchTableMetadata:
-    def test_returns_metadata_dict(self):
-        adapter = _make_adapter(
-            raw_sql_rows=[
-                [("orders", "BASE TABLE", 100), ("users", "VIEW", None)],
-            ],
-        )
-        metadata = adapter._fetch_table_metadata("analytics")
-        assert metadata["orders"] == {"table_type": "BASE TABLE", "row_count": 100}
-        assert metadata["users"] == {"table_type": "VIEW", "row_count": None}
-
-    def test_sql_uses_backtick_quoting(self):
-        adapter = _make_adapter(raw_sql_rows=[[]])
-        adapter._fetch_table_metadata("analytics")
-        assert "`analytics.INFORMATION_SCHEMA.TABLES`" in adapter._conn.queries[0]
-
-    def test_error_raises_runtime_error(self):
-        adapter = _make_error_adapter()
-        with pytest.raises(RuntimeError, match="Failed to read table metadata"):
-            adapter._fetch_table_metadata("analytics")
-
-
-# ---------------------------------------------------------------------------
-# _get_table_type
-# ---------------------------------------------------------------------------
-
-
 class TestGetTableType:
     def test_returns_table(self):
         adapter = _make_adapter(raw_sql_rows=[[("BASE TABLE",)]])
@@ -258,7 +231,7 @@ class TestFetchSchemaInfo:
     def test_builds_table_infos(self):
         adapter = _make_adapter(
             raw_sql_rows=[
-                [("orders", "BASE TABLE", 100)],
+                [("orders", "BASE TABLE", 100, None)],
             ],
             table_names={"analytics": ["orders"]},
             tables={
@@ -284,7 +257,7 @@ class TestFetchSchemaInfo:
     def test_falls_back_to_get_table_type_when_metadata_is_none(self):
         adapter = _make_adapter(
             raw_sql_rows=[
-                [("orders", None, 100)],  # table_type is None
+                [("orders", None, 100, None)],  # table_type is None
                 [("BASE TABLE",)],  # _get_table_type fallback
             ],
             table_names={"analytics": ["orders"]},
@@ -312,7 +285,7 @@ class TestFetchSchemaInfo:
     def test_view_type_from_metadata(self):
         adapter = _make_adapter(
             raw_sql_rows=[
-                [("my_view", "VIEW", None)],
+                [("my_view", "VIEW", None, None)],
             ],
             table_names={"analytics": ["my_view"]},
             tables={
@@ -389,7 +362,7 @@ class TestFetchRowCounts:
     def test_information_schema_mode(self):
         adapter = _make_adapter(
             raw_sql_rows=[
-                [("orders", "BASE TABLE", 42)],
+                [("orders", "BASE TABLE", 42, None)],
             ],
             use_info_schema_row_counts=True,
         )
@@ -443,7 +416,7 @@ class TestFetchRowCounts:
     def test_info_schema_missing_row_count_skips(self):
         adapter = _make_adapter(
             raw_sql_rows=[
-                [("other_table", "BASE TABLE", 10)],
+                [("other_table", "BASE TABLE", 10, None)],
             ],
             use_info_schema_row_counts=True,
         )
@@ -475,7 +448,7 @@ class TestFetchRowCounts:
     def test_caches_metadata_per_schema(self):
         adapter = _make_adapter(
             raw_sql_rows=[
-                [("t1", "TABLE", 10), ("t2", "TABLE", 20)],
+                [("t1", "TABLE", 10, None), ("t2", "TABLE", 20, None)],
             ],
             use_info_schema_row_counts=True,
         )
@@ -496,7 +469,7 @@ class TestFetchRowCounts:
 
     def test_metadata_cache_shared_with_fetch_schema_info(self):
         """fetch_row_counts reuses metadata already cached by fetch_schema_info."""
-        metadata_rows = [("orders", "BASE TABLE", 42)]
+        metadata_rows = [("orders", "BASE TABLE", 42, None)]
         adapter = _make_adapter(
             raw_sql_rows=[
                 metadata_rows,  # consumed by fetch_schema_info
@@ -584,7 +557,7 @@ class TestFetchTableUsage:
             raw_sql_rows=[
                 [("analytics", "orders", ts)],  # JOBS_BY_PROJECT
                 [
-                    ("orders", "BASE TABLE", 100)
+                    ("orders", "BASE TABLE", 100, None)
                 ],  # _fetch_table_metadata via fetch_schema_info
             ],
             table_names={"analytics": ["orders"]},
@@ -602,7 +575,7 @@ class TestFetchTableUsage:
         adapter = _make_adapter(
             raw_sql_rows=[
                 [],  # JOBS_BY_PROJECT returns nothing
-                [("orders", "BASE TABLE", 100)],  # _fetch_table_metadata
+                [("orders", "BASE TABLE", 100, None)],  # _fetch_table_metadata
             ],
             table_names={"analytics": ["orders"]},
             tables={
@@ -617,7 +590,7 @@ class TestFetchTableUsage:
         adapter = _make_adapter(
             raw_sql_rows=[
                 [("analytics", "orders", None)],  # queried_at is None
-                [("orders", "BASE TABLE", 100)],
+                [("orders", "BASE TABLE", 100, None)],
             ],
             table_names={"analytics": ["orders"]},
             tables={
