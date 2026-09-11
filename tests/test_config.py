@@ -413,3 +413,78 @@ def test_write_config_slack_omitted_without_webhook(tmp_path):
     write_config(config, path)
     content = path.read_text()
     assert "slack" not in content
+
+
+# --- freshness_method ---
+
+
+_FRESHNESS_BASE = '[connection]\ntype = "duckdb"\npath = "w.duckdb"\n'
+
+
+def test_settings_freshness_method_defaults_to_auto(tmp_path):
+    path = tmp_path / "olly.toml"
+    path.write_text(_FRESHNESS_BASE)
+    assert load_config(path).settings.freshness_method == "auto"
+
+
+def test_settings_freshness_method_parsed(tmp_path):
+    path = tmp_path / "olly.toml"
+    path.write_text(_FRESHNESS_BASE + '[settings]\nfreshness_method = "metadata"\n')
+    assert load_config(path).settings.freshness_method == "metadata"
+
+
+def test_override_freshness_method_parsed(tmp_path):
+    path = tmp_path / "olly.toml"
+    path.write_text(
+        _FRESHNESS_BASE
+        + '[[overrides]]\nmatch = "main.orders"\nfreshness_method = "column"\n'
+        'freshness_column = "updated_at"\n'
+    )
+    override = load_config(path).connections["primary"].overrides[0]
+    assert override.freshness_method == "column"
+    assert override.freshness_column == "updated_at"
+
+
+def test_override_freshness_method_defaults_to_none(tmp_path):
+    path = tmp_path / "olly.toml"
+    path.write_text(
+        _FRESHNESS_BASE + '[[overrides]]\nmatch = "main.orders"\nfreshness_column = "u"\n'
+    )
+    assert load_config(path).connections["primary"].overrides[0].freshness_method is None
+
+
+def test_invalid_settings_freshness_method_warns():
+    config = make_config()
+    config.settings.freshness_method = "bogus"
+    warnings = validate_config(config)
+    assert any("freshness_method" in w and "bogus" in w for w in warnings)
+
+
+def test_invalid_override_freshness_method_warns():
+    config = make_config()
+    config.connections["primary"].overrides = [
+        Override(match="main.orders", freshness_method="nope")
+    ]
+    warnings = validate_config(config)
+    assert any("nope" in w for w in warnings)
+
+
+def test_valid_freshness_methods_do_not_warn():
+    for method in ("auto", "metadata", "column"):
+        config = make_config()
+        config.settings.freshness_method = method
+        warnings = validate_config(config)
+        assert not any("freshness_method" in w for w in warnings), method
+
+
+def test_freshness_method_roundtrips_through_write_config(tmp_path):
+    config = make_config()
+    config.settings.freshness_method = "metadata"
+    config.connections["primary"].overrides = [
+        Override(match="main.orders", freshness_method="column", freshness_column="u")
+    ]
+    path = tmp_path / "olly.toml"
+    write_config(config, path)
+    loaded = load_config(path)
+    assert loaded.settings.freshness_method == "metadata"
+    assert loaded.connections["primary"].overrides[0].freshness_method == "column"

@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import ibis
 
-from olly.adapters.base import BaseAdapter
+from olly.adapters.base import BaseAdapter, coerce_datetime
 from olly.models import ColumnInfo, TableInfo, UsageRecord, VolumeRecord
 
 if TYPE_CHECKING:
@@ -53,6 +53,67 @@ class SnowflakeAdapter(BaseAdapter):
     def SUPPORTS_USAGE_HISTORY(self) -> bool:
         """Query history is only available via ACCOUNT_USAGE views."""
         return self._use_account_usage
+
+    SUPPORTS_METADATA_FRESHNESS = True
+    """``LAST_ALTERED`` is available from INFORMATION_SCHEMA and ACCOUNT_USAGE."""
+
+    def fetch_last_modified(
+        self, table_infos: list[TableInfo]
+    ) -> dict[tuple[str, str], datetime]:
+        """Return ``LAST_ALTERED`` per table, one metadata query per database.
+
+        Uses ``SNOWFLAKE.ACCOUNT_USAGE.TABLES`` when ``use_account_usage`` is
+        enabled, otherwise each database's ``INFORMATION_SCHEMA.TABLES``.
+        """
+        by_db: dict[str, list[TableInfo]] = {}
+        for ti in table_infos:
+            if ti.table_type == "VIEW":
+                continue
+            database, _ = _split_schema(ti.schema_name)
+            by_db.setdefault(database, []).append(ti)
+
+        result: dict[tuple[str, str], datetime] = {}
+        for database, infos in by_db.items():
+            schema_list = list({_split_schema(ti.schema_name)[1] for ti in infos})
+            schema_filter = ", ".join(
+                f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schema_list
+            )
+            safe_db = database.replace("'", "''")
+            safe_db_ident = database.replace('"', '""')
+            if self._use_account_usage:
+                sql = (
+                    "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, LAST_ALTERED "
+                    "FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES "
+                    f"WHERE TABLE_CATALOG = '{safe_db}' "
+                    f"AND TABLE_SCHEMA IN ({schema_filter}) "
+                    "AND DELETED IS NULL"
+                )
+            else:
+                sql = (
+                    "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, LAST_ALTERED "
+                    f'FROM "{safe_db_ident}".INFORMATION_SCHEMA.TABLES '
+                    f"WHERE TABLE_SCHEMA IN ({schema_filter})"
+                )
+            try:
+                rows = self._raw_sql(sql).fetchall()
+            except Exception:
+                logger.warning(
+                    "Could not read LAST_ALTERED metadata for database %s", database
+                )
+                continue
+
+            altered: dict[tuple[str, str, str], datetime] = {}
+            for row in rows:
+                parsed = coerce_datetime(row[3])
+                if parsed is not None:
+                    altered[(str(row[0]), str(row[1]), str(row[2]))] = parsed
+
+            for ti in infos:
+                db, sch = _split_schema(ti.schema_name)
+                value = altered.get((db, sch, ti.table_name))
+                if value is not None:
+                    result[(ti.schema_name, ti.table_name)] = value
+        return result
 
     def _get_ibis_table(self, schema_name: str, table_name: str) -> Any:
         database, schema = _split_schema(schema_name)

@@ -49,7 +49,7 @@ CLI is a thin wrapper (`src/olly/__init__.py` → `src/olly/cli/`). All logic li
 - `logging.py` — `setup_logging(verbose)`: configures the `"olly"` logger hierarchy
 - `checks/schema.py` — schema diff detection (tables, columns, types, nullability)
 - `checks/volume.py` — row count anomaly detection via EWMA (default) or z-score
-- `checks/freshness.py` — timestamp freshness + row-count staleness proxy
+- `checks/freshness.py` — freshness via catalog metadata (default), `MAX(column)` scans, or a row-count staleness proxy
 - `checks/integrity.py` — cross-source data integrity syncs (`load_syncs`, `run_syncs`; methods: COUNT, HASH, PK, COUNT_DISTINCT)
 - `checks/contracts.py` — validate warehouse schema against declared contracts
 - `checks/usage.py` — table usage/staleness detection (unused tables, stale tables based on last query time)
@@ -69,12 +69,44 @@ Key entry points for programmatic use: `cli/snapshot.py:take_snapshot()`, `check
 4. **Schema** (`check_schema`) — compares latest vs. second-latest schema snapshots
 5. **Contracts** (`check_contracts`) — if `config.contracts.module` set
 6. **Volume** (`check_volume`) — per-table thresholds resolved via `resolve_table_settings_with_sources`
-7. **Freshness** (`check_freshness`) — per-table thresholds resolved the same way
+7. **Freshness** (`check_freshness`) — per-table thresholds resolved the same way;
+   strategy per table is metadata / column / proxy (see below)
 
 After all connections:
 
 8. **Integrity** (`run_syncs`) — global, not per-connection; if `config.integrity.module` set
 9. **dbt** (`check_dbt`) — global; if `config.dbt.run_results_path` set
+
+## Freshness strategies
+
+`check_freshness` picks one of three strategies per table, driven by
+`freshness_method` (global `[settings]` or per-table `[[overrides]]`):
+
+| Method | Source | Cost |
+|---|---|---|
+| `metadata` | Catalog last-modified (BigQuery `storage_last_modified_time`, Snowflake `LAST_ALTERED`) | Fixed per run — never scans table data |
+| `column` | `MAX(freshness_column)` | One scan per table |
+| `auto` (default) | `column` when a `freshness_column` is explicitly configured, else `metadata` | Depends |
+
+Metadata lookups are **batched**: `check_freshness` calls
+`adapter.fetch_last_modified()` once for all metadata-strategy tables. On
+BigQuery this reuses the per-dataset `_metadata_cache` already warmed by
+`fetch_schema_info` / `fetch_row_counts`, so freshness usually costs zero
+additional queries. Snowflake issues one query per database.
+
+Set `freshness_method = "metadata"` in `[settings]` to guarantee no
+freshness check ever scans table data.
+
+Adapters declare support via `SUPPORTS_METADATA_FRESHNESS` (True for
+BigQuery and Snowflake; False for DuckDB and Postgres, which have no
+reliable catalog last-modified). When the chosen strategy is unavailable
+— no metadata support, or no `freshness_column` configured — the table
+falls back to the row-count staleness proxy.
+
+**Semantics differ**: catalog metadata reports when the table was last
+*written*, `MAX(column)` reports the latest *event time* in the data. A
+table rewritten on schedule with stale upstream data looks fresh to the
+metadata check. Use `column` for tables where event time is what matters.
 
 ## Adapter Protocol
 
@@ -92,6 +124,7 @@ for name, nc in resolve_connections(config, connection_name=None):
     adapter.fetch_schema_info(schemas)
     adapter.fetch_row_counts(table_infos)
     adapter.fetch_max_timestamp(schema, table, column)
+    adapter.fetch_last_modified(table_infos)  # batched, metadata-only
     adapter.fetch_count(schema, table, where_sql)
     adapter.fetch_count_distinct(schema, table, column, where_sql)
     adapter.fetch_table_schema(schema, table)
@@ -211,13 +244,14 @@ Per-table setting overrides via `[[overrides]]`. More specific matches win. Prec
 
 Override fields:
 - `freshness_column` — column name for freshness checks
+- `freshness_method` — `"auto"` (default), `"metadata"`, or `"column"`
 - `freshness_threshold_hours` — max age before alerting (default: 24.0)
 - `volume_zscore_threshold` — z-score threshold for volume anomalies (default: 3.0)
 - `volume_method` — `"ewma"` (default) or `"zscore"`
 
 ### Other config sections
 
-- `[settings]` — global defaults: `history_depth`, `volume_zscore_threshold`, `volume_method`, `freshness_threshold_hours`, `min_history_for_anomaly`, `write_results`, `state_schema`
+- `[settings]` — global defaults: `history_depth`, `volume_zscore_threshold`, `volume_method`, `freshness_method`, `freshness_threshold_hours`, `min_history_for_anomaly`, `write_results`, `state_schema`
 - `[integrity]` — `module` pointing to a Python file exporting a `syncs` list of `Sync` dataclasses
 - `[contracts]` — `module` pointing to a Python file defining `TableContract` subclasses
 - `[dbt]` — `run_results_path`, `include_skipped`

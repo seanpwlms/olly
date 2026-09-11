@@ -28,6 +28,7 @@ class Override:
 
     match: str
     freshness_column: str | None = None
+    freshness_method: str | None = None
     freshness_threshold_hours: float | None = None
     volume_zscore_threshold: float | None = None
     volume_method: str | None = None
@@ -64,6 +65,15 @@ _KNOWN_CONN_KEYS = {
     "connection_string",
 }
 
+FRESHNESS_METHODS = {"auto", "metadata", "column"}
+"""Valid values for ``freshness_method``.
+
+``auto``     -- use ``freshness_column`` when explicitly configured, else
+                catalog metadata, else the row-count staleness proxy.
+``metadata`` -- catalog metadata only; never scans table data.
+``column``   -- always scan ``MAX(freshness_column)``.
+"""
+
 
 @dataclass
 class Settings:
@@ -72,6 +82,7 @@ class Settings:
     history_depth: int = 30
     volume_zscore_threshold: float = 3.0
     volume_method: str = "ewma"
+    freshness_method: str = "auto"
     freshness_threshold_hours: float = 24.0
     min_history_for_anomaly: int = 5
     write_results: bool = True
@@ -173,10 +184,12 @@ class ResolvedTableSettings:
     """Resolved per-table check settings with the source of each value."""
 
     freshness_column: str | None
+    freshness_method: str
     freshness_threshold_hours: float
     volume_zscore_threshold: float
     volume_method: str
     freshness_column_source: str
+    freshness_method_source: str
     freshness_threshold_hours_source: str
     volume_zscore_threshold_source: str
     volume_method_source: str
@@ -299,6 +312,7 @@ def load_config(path: Path | None = None) -> OllyConfig:
         history_depth=settings_raw.get("history_depth", 30),
         volume_zscore_threshold=settings_raw.get("volume_zscore_threshold", 3.0),
         volume_method=settings_raw.get("volume_method", "ewma"),
+        freshness_method=settings_raw.get("freshness_method", "auto"),
         freshness_threshold_hours=settings_raw.get("freshness_threshold_hours", 24.0),
         min_history_for_anomaly=settings_raw.get("min_history_for_anomaly", 5),
         write_results=settings_raw.get("write_results", True),
@@ -415,6 +429,7 @@ def _parse_overrides_section(overrides_raw: list, context: str) -> list[Override
             Override(
                 match=str(_require(o, "match", f"[[{context}.overrides]][{i}]")),
                 freshness_column=o.get("freshness_column"),
+                freshness_method=o.get("freshness_method"),
                 freshness_threshold_hours=o.get("freshness_threshold_hours"),
                 volume_zscore_threshold=o.get("volume_zscore_threshold"),
                 volume_method=o.get("volume_method"),

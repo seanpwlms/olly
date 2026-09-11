@@ -190,6 +190,7 @@ def make_bigquery_adapter(
     *,
     raw_sql_rows: list[list] | None = None,
     region: str = "us",
+    use_info_schema_row_counts: bool = True,
 ):
     """Build a BigQueryAdapter with a stub connection (no real GCP).
 
@@ -200,8 +201,30 @@ def make_bigquery_adapter(
 
     adapter = BigQueryAdapter.__new__(BigQueryAdapter)
     adapter._conn = _BigQueryStubConn(raw_sql_rows)
+    adapter._use_information_schema_row_counts = use_info_schema_row_counts
+    adapter._region = region
+    adapter._metadata_cache = {}
+    return adapter
+
+
+def make_bigquery_error_adapter(region: str = "us"):
+    """Build a BigQueryAdapter whose connection raises on every call."""
+    from olly.adapters.bigquery import BigQueryAdapter
+
+    class _ErrorConn:
+        queries: list[str] = []
+
+        def raw_sql(self, sql: str):
+            raise Exception("connection lost")
+
+        def table(self, name, database=None):
+            raise Exception("connection lost")
+
+    adapter = BigQueryAdapter.__new__(BigQueryAdapter)
+    adapter._conn = _ErrorConn()
     adapter._use_information_schema_row_counts = True
     adapter._region = region
+    adapter._metadata_cache = {}
     return adapter
 
 

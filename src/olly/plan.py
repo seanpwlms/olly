@@ -197,6 +197,11 @@ def format_plan(result: PlanResult) -> str:
                 )
                 lines.append(
                     "    "
+                    f"freshness_method: {settings.freshness_method} "
+                    f"({settings.freshness_method_source})"
+                )
+                lines.append(
+                    "    "
                     f"freshness_threshold_hours: {settings.freshness_threshold_hours} "
                     f"({settings.freshness_threshold_hours_source})"
                 )

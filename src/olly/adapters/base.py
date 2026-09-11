@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import ibis
@@ -13,6 +13,30 @@ if TYPE_CHECKING:
     from olly.adapter import ProgressCallback
 
 logger = logging.getLogger(__name__)
+
+
+def coerce_datetime(value: Any) -> datetime | None:
+    """Normalize a warehouse timestamp value to an aware ``datetime``.
+
+    Accepts ``datetime`` objects, pandas timestamps, and ISO-8601 strings.
+    Returns ``None`` when the value is missing or unparseable.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, datetime):
+        to_pydatetime = getattr(value, "to_pydatetime", None)
+        if callable(to_pydatetime):
+            value = to_pydatetime()
+        elif isinstance(value, str):
+            try:
+                value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        else:
+            return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value
 
 
 class BaseAdapter:
@@ -29,6 +53,14 @@ class BaseAdapter:
 
     When False, ``check_usage`` is skipped to avoid flagging every table as
     unused on warehouses with no usage telemetry (e.g. DuckDB).
+    """
+
+    SUPPORTS_METADATA_FRESHNESS: bool = False
+    """Whether the adapter can read last-modified times from catalog metadata.
+
+    When False, ``check_freshness`` cannot use the metadata path and falls
+    back to a configured ``freshness_column`` or the row-count staleness
+    proxy (e.g. DuckDB, Postgres).
     """
 
     @property
@@ -235,6 +267,12 @@ class BaseAdapter:
             raise RuntimeError(
                 f"Failed to fetch max timestamp for {schema_name}.{table_name}.{column}"
             ) from exc
+
+    def fetch_last_modified(
+        self, table_infos: list[TableInfo]
+    ) -> dict[tuple[str, str], datetime]:
+        """Not supported by default -- returns an empty mapping."""
+        return {}
 
     def fetch_hash(
         self,
