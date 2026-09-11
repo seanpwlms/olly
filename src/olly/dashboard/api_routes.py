@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Generator
+from typing import Any, Generator
 
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
@@ -21,7 +21,6 @@ from olly.dashboard.data import (
     get_least_used_tables,
     get_previous_stats,
     get_schema_diff,
-    get_snapshot_history,
     get_stats,
     get_table_history,
     get_table_info,
@@ -38,40 +37,25 @@ from olly.dashboard.data_checks import get_contracts_page_data, get_integrity_pa
 from olly.dashboard.schemas import (
     ConnectionsResponse,
     ContractsResponse,
-    ContractStatusModel,
-    DashboardStatsModel,
-    DbtExecutionLeaderboardModel,
     DbtFindingModel,
     DbtNodeTimingModel,
     DbtNodeTimingsResponse,
     DbtResponse,
-    DbtRunHistoryPointModel,
-    DbtStatsModel,
     DispositionCounts,
     DispositionHistoryResponse,
     FindingModel,
     FindingsByConnection,
     FindingsResponse,
-    FindingsStatsModel,
-    FindingsTrendPointModel,
-    HistoryResponse,
     IntegrityResponse,
-    LeastUsedTableModel,
     OverviewResponse,
     PrevStatsModel,
-    SnapshotInfoModel,
-    SyncStatusModel,
     TableCostModel,
     TableDetailResponse,
-    TableHistoryModel,
     TableRowModel,
     TablesResponse,
     UsageResponse,
-    UsageStatsModel,
-    VolumeStatsModel,
     FiltersModel,
     CostUserModel,
-    SchemaDiffModel,
     TableInfoModel,
 )
 from olly.config import OllyConfig, load_config
@@ -99,16 +83,36 @@ def _get_current_connection(
     return next(iter(cfg.connections.keys()))
 
 
+_ADAPTER_CACHE: dict[str, Any] = {}
+
+
+def _warehouse_adapter(cfg: OllyConfig, conn_name: str) -> Any:
+    """Return a cached warehouse adapter for ``conn_name``.
+
+    Only needed when state lives in the warehouse. Warehouse-backed stores do
+    not own the connection (``WarehouseStateStore.close()`` is a no-op), so a
+    single adapter is reused across requests instead of reconnecting each time.
+    """
+    adapter = _ADAPTER_CACHE.get(conn_name)
+    if adapter is None:
+        from olly.adapter import connect_typed
+
+        adapter = connect_typed(cfg.connections[conn_name].connection)
+        _ADAPTER_CACHE[conn_name] = adapter
+    return adapter
+
+
 @contextmanager
 def _state_db(
     connection_name: str = "", config: OllyConfig | None = None,
 ) -> Generator[tuple[BaseStateStore, str], None, None]:
     cfg = config or load_config()
     conn_name = _get_current_connection(connection_name, cfg)
-    nc = cfg.connections[conn_name]
-    from olly.adapter import connect_typed
-
-    adapter = connect_typed(nc.connection)
+    # With SQLite state the dashboard never touches the warehouse, so no
+    # adapter is built at all.
+    adapter = (
+        _warehouse_adapter(cfg, conn_name) if cfg.settings.state_schema else None
+    )
     with open_state(cfg, adapter) as state_db:
         yield state_db, conn_name
 
@@ -159,10 +163,10 @@ def _get_overview_data(
     )
 
     return OverviewResponse(
-        stats=DashboardStatsModel.model_validate(stats),
-        dbt_stats=DbtStatsModel.model_validate(dbt_stats),
+        stats=stats,
+        dbt_stats=dbt_stats,
         findings_by_connection=fbc,
-        findings_trend=[FindingsTrendPointModel.model_validate(p) for p in findings_trend],
+        findings_trend=findings_trend,
         top_tables=[TableRowModel.from_dict(r) for r in top_tables],
         prev_stats=prev_stats,
         disposition_counts=disposition_counts,
@@ -214,7 +218,7 @@ def api_findings(
 
     return FindingsResponse(
         findings=[FindingModel.model_validate(f) for f in page_findings],
-        stats=FindingsStatsModel.model_validate(stats),
+        stats=stats,
         filters=FiltersModel(
             check_types=check_types,
             severities=severities,
@@ -378,26 +382,13 @@ def api_table_detail(schema: str, table: str, connection: str = Query("")):
     return TableDetailResponse(
         table_info=TableInfoModel.model_validate(table_info) if table_info else None,
         findings=[FindingModel.model_validate(f) for f in table_findings],
-        volume_stats=VolumeStatsModel.model_validate(vol_stats),
+        volume_stats=vol_stats,
         volume_timeseries=timeseries,
-        history=TableHistoryModel.model_validate(history),
-        schema_diff=SchemaDiffModel.model_validate(schema_diff) if schema_diff else None,
-        contract=ContractStatusModel.model_validate(contract_match) if contract_match else None,
-        integrity_syncs=[SyncStatusModel.model_validate(s) for s in matching_syncs],
+        history=history,
+        schema_diff=schema_diff,
+        contract=contract_match,
+        integrity_syncs=matching_syncs,
         cost=cost_data,
-    )
-
-
-@router.get("/history", response_model=HistoryResponse)
-def api_history(connection: str = Query(""), days: int = Query(30)):
-    config = load_config()
-    conn_name = _get_current_connection(connection, config)
-    with _state_db(conn_name, config) as (state_db, conn_name):
-        snapshots = get_snapshot_history(state_db, days, conn_name)
-
-    return HistoryResponse(
-        snapshots=[SnapshotInfoModel.model_validate(s) for s in snapshots],
-        days=days,
     )
 
 
@@ -417,11 +408,11 @@ def api_usage(connection: str = Query("")):
     stats = get_usage_stats(usage_findings, cost_summary)
 
     return UsageResponse(
-        stats=UsageStatsModel.model_validate(stats),
+        stats=stats,
         usage_findings=[FindingModel.model_validate(f) for f in usage_findings],
         cost_summary=cost_summary,
         cost_daily=cost_daily,
-        least_used=[LeastUsedTableModel.model_validate(t) for t in least_used],
+        least_used=least_used,
     )
 
 
@@ -439,16 +430,12 @@ def api_dbt(connection: str = Query("")):
     severities = sorted({f.severity for f in dbt_findings})
 
     return DbtResponse(
-        dbt_stats=DbtStatsModel.model_validate(dbt_stats),
+        dbt_stats=dbt_stats,
         dbt_findings=[DbtFindingModel.model_validate(f) for f in dbt_findings],
         resource_types=resource_types,
         severities=severities,
-        execution_leaderboard=[
-            DbtExecutionLeaderboardModel.model_validate(e) for e in leaderboard
-        ],
-        run_history=[
-            DbtRunHistoryPointModel.model_validate(p) for p in run_history
-        ],
+        execution_leaderboard=leaderboard,
+        run_history=run_history,
     )
 
 
@@ -486,7 +473,7 @@ def api_contracts(connection: str = Query("")):
 
     page_data = get_contracts_page_data(findings, config)
     return ContractsResponse(
-        contracts=[ContractStatusModel.model_validate(c) for c in page_data.contracts],
+        contracts=page_data.contracts,
         pass_count=page_data.pass_count,
         fail_count=page_data.fail_count,
         total_count=page_data.total_count,
@@ -505,7 +492,7 @@ def api_integrity(connection: str = Query("")):
 
     page_data = get_integrity_page_data(findings, config)
     return IntegrityResponse(
-        syncs=[SyncStatusModel.model_validate(s) for s in page_data.syncs],
+        syncs=page_data.syncs,
         pass_count=page_data.pass_count,
         fail_count=page_data.fail_count,
         total_count=page_data.total_count,
@@ -572,21 +559,3 @@ def api_disposition_history(finding_id: int):
         current_disposition=current,
         history=history,
     )
-
-
-@router.post("/refresh")
-def api_refresh():
-    from olly.cli.check import run_checks
-    from olly.config import load_config as _load_config
-    from olly.results import write_findings_json
-
-    config = _load_config()
-    try:
-        findings, dbt_findings, cost_records = run_checks(config)
-    except Exception as exc:
-        return JSONResponse(
-            {"error": f"Check run failed: {exc}"}, status_code=500,
-        )
-    write_findings_json(findings, dbt_findings=dbt_findings, cost_records=cost_records)
-
-    return JSONResponse({"success": True})

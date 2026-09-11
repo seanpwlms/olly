@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchApi, postApi, putApi } from "../api";
+import { fetchApi, putApi } from "../api";
 import type {
   ConnectionsResponse,
   ContractsResponse,
@@ -140,16 +140,6 @@ export function useIntegrity(connection: string) {
     queryKey: ["integrity", connection],
     queryFn: () =>
       fetchApi<IntegrityResponse>("/api/integrity", { connection }),
-  });
-}
-
-export function useRefresh() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => postApi<{ success: boolean }>("/api/refresh"),
-    onSuccess: () => {
-      void queryClient.invalidateQueries();
-    },
   });
 }
 

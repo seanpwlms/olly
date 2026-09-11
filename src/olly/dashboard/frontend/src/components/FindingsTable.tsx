@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { Badge } from "./Badge";
 import { DispositionSelect } from "./DispositionSelect";
@@ -75,9 +75,8 @@ export function FindingsTable({ findings, showLink = true }: FindingsTableProps)
         </thead>
         <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
           {findings.map((f, i) => (
-            <>
+            <Fragment key={f.id ?? i}>
               <tr
-                key={f.id ?? i}
                 className={`hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors border-l-4 cursor-pointer ${getBorderClass(f)} ${getRowOpacity(f.disposition)}`}
                 onClick={() => setExpandedId(expandedId === f.id ? null : f.id)}
               >
@@ -119,14 +118,14 @@ export function FindingsTable({ findings, showLink = true }: FindingsTableProps)
                 </td>
               </tr>
               {expandedId === f.id && f.id !== null && (
-                <tr key={`history-${f.id}`}>
+                <tr>
                   <td colSpan={7} className="px-8 py-2 bg-gray-50 dark:bg-gray-800/50">
                     <FindingDetails finding={f} />
                     <DispositionHistory findingId={f.id} />
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           ))}
         </tbody>
       </table>

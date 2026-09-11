@@ -81,13 +81,6 @@ def test_api_table_detail_not_found_graceful(dashboard_client):
     assert data["table_info"] is None
 
 
-def test_api_history(dashboard_client):
-    resp = dashboard_client.get("/api/history")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["days"] == 30
-
-
 def test_api_connections(dashboard_client):
     resp = dashboard_client.get("/api/connections")
     assert resp.status_code == 200

@@ -3,6 +3,12 @@ from __future__ import annotations
 from pydantic import BaseModel, ConfigDict, Field
 
 
+# Every dashboard-local shape is defined here, once. Functions in data.py and
+# data_checks.py build these models directly; api_routes.py returns them as-is.
+# ``model_validate`` is only used to convert the core dataclasses from
+# models.py (Finding, DbtFinding, TableInfo), which the rest of olly owns.
+
+
 # ── Core model mirrors (from models.py dataclasses) ──
 
 
@@ -51,20 +57,20 @@ class DbtFindingModel(BaseModel):
     dbt_run_id: int | None = None
 
 
-# ── From data.py dataclasses ──
+# ── Aggregates built by data.py ──
 
 
 class VolumeStatsModel(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    current: int | None
-    previous: int | None
-    delta: int | None
-    delta_pct: float | None
-    minimum: int | None
-    maximum: int | None
-    average: float | None
-    snapshot_count: int
+    current: int | None = None
+    previous: int | None = None
+    delta: int | None = None
+    delta_pct: float | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+    average: float | None = None
+    snapshot_count: int = 0
 
 
 class TableHistoryModel(BaseModel):
@@ -95,15 +101,6 @@ class FindingsStatsModel(BaseModel):
     in_progress_count: int = 0
     no_action_count: int = 0
     completed_count: int = 0
-
-
-class SnapshotInfoModel(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    snapshot_id: int
-    created_at: str
-    connection_name: str
-    table_count: int
 
 
 class DashboardStatsModel(BaseModel):
@@ -183,7 +180,7 @@ class FindingsTrendPointModel(BaseModel):
     warnings: int
 
 
-# ── From data_checks.py dataclasses ──
+# ── Aggregates built by data_checks.py ──
 
 
 class ContractColumnStatusModel(BaseModel):
@@ -219,6 +216,22 @@ class SyncStatusModel(BaseModel):
     severity: str
     status: str
     findings: list[FindingModel]
+
+
+class ContractsPageData(BaseModel):
+    contracts: list[ContractStatusModel] = []
+    pass_count: int = 0
+    fail_count: int = 0
+    total_count: int = 0
+    configured: bool = False
+
+
+class IntegrityPageData(BaseModel):
+    syncs: list[SyncStatusModel] = []
+    pass_count: int = 0
+    fail_count: int = 0
+    total_count: int = 0
+    configured: bool = False
 
 
 # ── Response envelopes ──
@@ -326,11 +339,6 @@ class TableDetailResponse(BaseModel):
     contract: ContractStatusModel | None
     integrity_syncs: list[SyncStatusModel]
     cost: TableCostModel | None
-
-
-class HistoryResponse(BaseModel):
-    snapshots: list[SnapshotInfoModel]
-    days: int
 
 
 class UsageResponse(BaseModel):
