@@ -7,26 +7,7 @@ single place where that boundary is crossed.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-
 from olly.state import BaseStateStore
-
-
-def get_snapshot_history(
-    state_db: BaseStateStore, days: int, connection_name: str = "",
-) -> list[tuple[int, str, str, int]]:
-    """Return recent snapshots as (id, created_at, connection_name, table_count)."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
-    s = state_db._table("snapshots")  # noqa: SLF001
-    ss = state_db._table("schema_snapshot")  # noqa: SLF001
-    return state_db._query(  # noqa: SLF001
-        f"SELECT s.id, s.created_at, s.connection_name, "  # noqa: S608
-        f"COUNT(DISTINCT ss.schema_name || '.' || ss.table_name) "
-        f"FROM {s} s LEFT JOIN {ss} ss ON ss.snapshot_id = s.id "
-        f"WHERE s.created_at >= :cutoff AND s.connection_name = :connection_name "
-        f"GROUP BY s.id ORDER BY s.id DESC",
-        {"cutoff": cutoff, "connection_name": connection_name},
-    )
 
 
 def get_findings_trend(

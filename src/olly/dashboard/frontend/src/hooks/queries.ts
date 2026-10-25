@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchApi, postApi, putApi } from "../api";
+import { fetchApi, putApi } from "../api";
 import type {
   ConnectionsResponse,
   ContractsResponse,
@@ -13,12 +13,20 @@ import type {
   DbtNodeTimingsResponse,
   DbtPreviousSqlResponse,
   DispositionHistoryResponse,
+  NavResponse,
 } from "../types";
 
 export function useConnections() {
   return useQuery({
     queryKey: ["connections"],
     queryFn: () => fetchApi<ConnectionsResponse>("/api/connections"),
+  });
+}
+
+export function useNav(connection: string) {
+  return useQuery({
+    queryKey: ["nav", connection],
+    queryFn: () => fetchApi<NavResponse>("/api/nav", { connection }),
   });
 }
 
@@ -140,16 +148,6 @@ export function useIntegrity(connection: string) {
     queryKey: ["integrity", connection],
     queryFn: () =>
       fetchApi<IntegrityResponse>("/api/integrity", { connection }),
-  });
-}
-
-export function useRefresh() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: () => postApi<{ success: boolean }>("/api/refresh"),
-    onSuccess: () => {
-      void queryClient.invalidateQueries();
-    },
   });
 }
 

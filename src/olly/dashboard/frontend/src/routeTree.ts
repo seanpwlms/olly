@@ -36,12 +36,6 @@ export type TablesSearch = {
   page?: number;
 };
 
-export type DbtSearch = {
-  connection?: string;
-  resource_type?: string;
-  severity?: string;
-};
-
 const rootRoute = createRootRoute({
   component: RootLayout,
 });
@@ -105,15 +99,10 @@ const usageRoute = createRoute({
   component: UsagePage,
 });
 
-export const dbtRoute = createRoute({
+const dbtRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/dbt",
   component: DbtPage,
-  validateSearch: (search: Record<string, unknown>): DbtSearch => ({
-    ...parseConnection(search),
-    resource_type: (search.resource_type as string) || undefined,
-    severity: (search.severity as string) || undefined,
-  }),
 });
 
 const routeTree = rootRoute.addChildren([

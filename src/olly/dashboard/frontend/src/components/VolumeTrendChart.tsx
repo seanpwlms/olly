@@ -49,8 +49,8 @@ export function VolumeTrendChart({ data, findings, schemaDiffTimestamp }: Volume
     : undefined;
 
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm p-5 mb-6">
-      <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-4">
+    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5 mb-6">
+      <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
         Volume Trend
       </h2>
       <ResponsiveContainer width="100%" height={250}>
@@ -63,41 +63,41 @@ export function VolumeTrendChart({ data, findings, schemaDiffTimestamp }: Volume
             domain={["dataMin", "dataMax"]}
             tickFormatter={(v: number) => formatDateLabel(new Date(v).toISOString())}
             stroke={axis}
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 12 }}
           />
           <YAxis
             stroke={axis}
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 12 }}
             tickFormatter={(v: number) => v.toLocaleString()}
           />
           <Tooltip
             labelFormatter={(v: number) => formatDateLabel(new Date(v).toISOString())}
-            formatter={(v: number) => [v.toLocaleString(), "Row Count"]}
+            formatter={(v: number) => [v.toLocaleString(), "Row count"]}
             contentStyle={{ backgroundColor: "var(--chart-bg)", border: "1px solid var(--chart-grid)" }}
           />
           {schemaDiffTs != null && (
             <ReferenceLine
               x={schemaDiffTs}
-              stroke="#8b5cf6"
+              stroke="var(--chart-axis)"
               strokeDasharray="4 4"
-              label={{ value: "schema change", position: "top", fontSize: 10, fill: "#8b5cf6" }}
+              label={{ value: "schema change", position: "top", fontSize: 12, fill: "var(--chart-axis)" }}
             />
           )}
           {Array.from(annotationTimestamps).map((ts) => (
             <ReferenceLine
               key={ts}
               x={ts}
-              stroke="#ef4444"
+              stroke="var(--color-red-500)"
               strokeDasharray="4 4"
-              label={{ value: "error", position: "top", fontSize: 10, fill: "#ef4444" }}
+              label={{ value: "error", position: "top", fontSize: 12, fill: "var(--color-red-500)" }}
             />
           ))}
           <Line
             type="monotone"
             dataKey="row_count"
-            stroke="#3b82f6"
+            stroke="var(--color-accent-500)"
             dot={{ r: 3 }}
-            name="Row Count"
+            name="Row count"
           />
         </LineChart>
       </ResponsiveContainer>

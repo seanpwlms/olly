@@ -1,9 +1,22 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from olly.config import load_config
-from olly.models import ColumnInfo, DbtFinding, Finding, TableInfo
+from olly.config import OllyConfig, load_config
+from olly.dashboard.schemas import (
+    ColumnInfoModel,
+    DashboardStatsModel,
+    DbtExecutionLeaderboardModel,
+    DbtRunHistoryPointModel,
+    DbtStatsModel,
+    FindingsStatsModel,
+    FindingsTrendPointModel,
+    LeastUsedTableModel,
+    NavSectionModel,
+    SchemaDiffModel,
+    TableHistoryModel,
+    UsageStatsModel,
+    VolumeStatsModel,
+)
+from olly.models import DbtFinding, Finding, TableInfo
 from olly.state import BaseStateStore
 
 
@@ -11,61 +24,6 @@ def get_all_connections() -> list[str]:
     """Return list of all configured connection names."""
     config = load_config()
     return list(config.connections.keys())
-
-
-@dataclass
-class VolumeStats:
-    current: int | None
-    previous: int | None
-    delta: int | None
-    delta_pct: float | None
-    minimum: int | None
-    maximum: int | None
-    average: float | None
-    snapshot_count: int
-
-
-@dataclass
-class TableHistory:
-    first_seen: str | None
-    snapshot_count: int
-
-
-@dataclass
-class SchemaDiff:
-    added: list[ColumnInfo]
-    removed: list[ColumnInfo]
-    type_changes: list[tuple[str, str, str]]  # (column, old_type, new_type)
-    nullable_changes: list[tuple[str, bool, bool]]  # (column, old, new)
-
-
-@dataclass
-class FindingsStats:
-    total_count: int
-    error_count: int
-    warning_count: int
-    by_check_type: dict[str, tuple[int, int]]  # {check_type: (errors, warnings)}
-    by_connection: dict[str, tuple[int, int]]  # {connection: (errors, warnings)}
-    not_started_count: int = 0
-    in_progress_count: int = 0
-    no_action_count: int = 0
-    completed_count: int = 0
-
-
-@dataclass
-class SnapshotInfo:
-    snapshot_id: int
-    created_at: str
-    connection_name: str
-    table_count: int
-
-
-@dataclass
-class DashboardStats:
-    error_count: int
-    warning_count: int
-    tables_monitored: int
-    last_check_time: str | None
 
 
 def load_findings_from_db(
@@ -80,24 +38,14 @@ def load_dbt_findings_from_db(state_db: BaseStateStore) -> list[DbtFinding]:
     return state_db.get_latest_dbt_findings()
 
 
-@dataclass
-class DbtStats:
-    error_count: int
-    warning_count: int
-    pass_count: int
-    total_count: int
-    total_execution_time: float = 0.0
-    total_failures: int = 0
-
-
-def get_dbt_stats(dbt_findings: list[DbtFinding]) -> DbtStats:
+def get_dbt_stats(dbt_findings: list[DbtFinding]) -> DbtStatsModel:
     """Compute summary stats for dbt findings."""
     total_failures = 0
     for f in dbt_findings:
         failures = f.details.get("failures")
         if isinstance(failures, int):
             total_failures += failures
-    return DbtStats(
+    return DbtStatsModel(
         error_count=sum(1 for f in dbt_findings if f.severity == "error"),
         warning_count=sum(1 for f in dbt_findings if f.severity == "warning"),
         pass_count=sum(1 for f in dbt_findings if f.severity == "pass"),
@@ -107,22 +55,59 @@ def get_dbt_stats(dbt_findings: list[DbtFinding]) -> DbtStats:
     )
 
 
-@dataclass
-class DbtExecutionLeaderboardEntry:
-    unique_id: str
-    resource_type: str
-    execution_time: float
-    status: str
-    severity: str
+def build_nav_sections(
+    findings: list[Finding],
+    dbt_findings: list[DbtFinding],
+    config: OllyConfig,
+) -> dict[str, NavSectionModel]:
+    """Build the per-section badge counts shown in the sidebar.
+
+    Deliberately reads only findings already loaded from state — it never
+    imports the user's contracts or integrity modules, so it stays cheap
+    enough to run on every page.
+    """
+
+    def counts(check_type: str) -> tuple[int, int]:
+        matched = [f for f in findings if f.check_type == check_type]
+        return (
+            sum(1 for f in matched if f.severity == "error"),
+            sum(1 for f in matched if f.severity == "warning"),
+        )
+
+    contract_errors, contract_warnings = counts("contracts")
+    integrity_errors, integrity_warnings = counts("integrity")
+    dbt_stats = get_dbt_stats(dbt_findings)
+
+    return {
+        "findings": NavSectionModel(
+            errors=sum(1 for f in findings if f.severity == "error"),
+            warnings=sum(1 for f in findings if f.severity == "warning"),
+        ),
+        "contracts": NavSectionModel(
+            configured=bool(config.contracts.module),
+            errors=contract_errors,
+            warnings=contract_warnings,
+        ),
+        "integrity": NavSectionModel(
+            configured=bool(config.integrity.module),
+            errors=integrity_errors,
+            warnings=integrity_warnings,
+        ),
+        "dbt": NavSectionModel(
+            configured=bool(config.dbt.run_results_path),
+            errors=dbt_stats.error_count,
+            warnings=dbt_stats.warning_count,
+        ),
+    }
 
 
 def get_dbt_execution_leaderboard(
     dbt_findings: list[DbtFinding], limit: int = 20,
-) -> list[DbtExecutionLeaderboardEntry]:
+) -> list[DbtExecutionLeaderboardModel]:
     """Return the slowest dbt nodes sorted by execution time descending."""
     sorted_findings = sorted(dbt_findings, key=lambda f: f.execution_time, reverse=True)
     return [
-        DbtExecutionLeaderboardEntry(
+        DbtExecutionLeaderboardModel(
             unique_id=f.unique_id,
             resource_type=f.resource_type,
             execution_time=f.execution_time,
@@ -133,24 +118,14 @@ def get_dbt_execution_leaderboard(
     ]
 
 
-@dataclass
-class DbtRunHistoryPoint:
-    created_at: str
-    elapsed_time: float
-    total_nodes: int
-    error_count: int
-    warning_count: int
-    pass_count: int
-
-
 def get_dbt_run_history(
     state_db: BaseStateStore, limit: int = 30,
-) -> list[DbtRunHistoryPoint]:
+) -> list[DbtRunHistoryPointModel]:
     """Get dbt run history for charting, oldest first."""
     rows = state_db.get_dbt_run_history_with_timestamps(limit)
     # rows come newest-first, reverse for chronological chart display
     return [
-        DbtRunHistoryPoint(
+        DbtRunHistoryPointModel(
             created_at=ts,
             elapsed_time=run.elapsed_time,
             total_nodes=run.total_nodes,
@@ -168,14 +143,6 @@ def get_dbt_node_timeseries(
     """Get execution time history for a specific dbt node."""
     rows = state_db.get_dbt_node_timing_timeseries(unique_id, limit)
     return [{"timestamp": ts, "execution_time": t} for ts, t in rows]
-
-
-@dataclass
-class UsageStats:
-    unused_count: int
-    stale_count: int
-    unused_schema_count: int
-    total_cost_usd: float | None
 
 
 def _is_schema_scope(finding: Finding) -> bool:
@@ -200,7 +167,7 @@ def get_usage_findings(findings: list[Finding]) -> list[Finding]:
 
 def get_usage_stats(
     usage_findings: list[Finding], cost_summary: dict | None
-) -> UsageStats:
+) -> UsageStatsModel:
     """Compute summary stats for the usage page.
 
     Unused vs. stale is determined by ``details.last_queried_at`` (absent
@@ -213,7 +180,7 @@ def get_usage_stats(
     unused = sum(
         1 for f in table_findings if f.details.get("last_queried_at") is None
     )
-    return UsageStats(
+    return UsageStatsModel(
         unused_count=unused,
         stale_count=len(table_findings) - unused,
         unused_schema_count=sum(1 for f in usage_findings if _is_schema_scope(f)),
@@ -261,10 +228,10 @@ def get_stats(
     findings: list[Finding],
     state_db: BaseStateStore,
     connection_name: str = "",
-) -> DashboardStats:
+) -> DashboardStatsModel:
     """Compute summary stats for the dashboard."""
     tables = state_db.get_latest_schema(connection_name)
-    return DashboardStats(
+    return DashboardStatsModel(
         error_count=sum(1 for f in findings if f.severity == "error"),
         warning_count=sum(1 for f in findings if f.severity == "warning"),
         tables_monitored=len(tables),
@@ -301,12 +268,12 @@ def get_volume_stats(
     table_name: str,
     depth: int = 30,
     connection_name: str = "",
-) -> VolumeStats:
+) -> VolumeStatsModel:
     """Compute volume statistics from snapshot history."""
     counts = state_db.get_volume_history(schema_name, table_name, depth, connection_name)
 
     if not counts:
-        return VolumeStats(None, None, None, None, None, None, None, 0)
+        return VolumeStatsModel()
     current = counts[0]
     previous = counts[1] if len(counts) > 1 else None
     delta = current - previous if previous is not None else None
@@ -316,7 +283,7 @@ def get_volume_stats(
         else None
     )
 
-    return VolumeStats(
+    return VolumeStatsModel(
         current=current,
         previous=previous,
         delta=delta,
@@ -330,16 +297,16 @@ def get_volume_stats(
 
 def get_table_history(
     state_db: BaseStateStore, schema_name: str, table_name: str, connection_name: str = ""
-) -> TableHistory:
+) -> TableHistoryModel:
     """Get first-seen date and snapshot count for a table."""
     first_seen, snapshot_count = state_db.get_table_first_seen(
         schema_name, table_name, connection_name
     )
 
     if first_seen is None:
-        return TableHistory(first_seen=None, snapshot_count=0)
+        return TableHistoryModel(first_seen=None, snapshot_count=0)
 
-    return TableHistory(
+    return TableHistoryModel(
         first_seen=first_seen[:16].replace("T", " "),
         snapshot_count=snapshot_count,
     )
@@ -350,7 +317,7 @@ def get_schema_diff(
     schema_name: str,
     table_name: str,
     connection_name: str = "",
-) -> SchemaDiff | None:
+) -> SchemaDiffModel | None:
     """Compare schema between the two most recent snapshots."""
     snapshot_ids = state_db.get_recent_snapshot_ids_for_table(
         schema_name, table_name, limit=2, connection_name=connection_name
@@ -369,12 +336,12 @@ def get_schema_diff(
     )
 
     added = [
-        ColumnInfo(name, dtype, nullable)
+        ColumnInfoModel(column_name=name, data_type=dtype, is_nullable=nullable)
         for name, (dtype, nullable) in current_cols.items()
         if name not in previous_cols
     ]
     removed = [
-        ColumnInfo(name, dtype, nullable)
+        ColumnInfoModel(column_name=name, data_type=dtype, is_nullable=nullable)
         for name, (dtype, nullable) in previous_cols.items()
         if name not in current_cols
     ]
@@ -393,7 +360,7 @@ def get_schema_diff(
     if not added and not removed and not type_changes and not nullable_changes:
         return None
 
-    return SchemaDiff(
+    return SchemaDiffModel(
         added=added,
         removed=removed,
         type_changes=type_changes,
@@ -414,7 +381,7 @@ def hydrate_dispositions(
             f.disposition = dispositions[f.id]
 
 
-def get_findings_stats(findings: list[Finding]) -> FindingsStats:
+def get_findings_stats(findings: list[Finding]) -> FindingsStatsModel:
     """Compute summary statistics for findings."""
     error_count = sum(1 for f in findings if f.severity == "error")
     warning_count = sum(1 for f in findings if f.severity == "warning")
@@ -438,7 +405,7 @@ def get_findings_stats(findings: list[Finding]) -> FindingsStats:
         else:
             by_connection[conn] = (errors, warnings + 1)
 
-    return FindingsStats(
+    return FindingsStatsModel(
         total_count=len(findings),
         error_count=error_count,
         warning_count=warning_count,
@@ -486,24 +453,6 @@ def filter_findings(
     return result
 
 
-def get_snapshot_history(
-    state_db: BaseStateStore, days: int, connection_name: str = ""
-) -> list[SnapshotInfo]:
-    """Get recent snapshots with metadata."""
-    from olly.dashboard.queries import get_snapshot_history as _query_snapshot_history
-
-    rows = _query_snapshot_history(state_db, days, connection_name)
-    return [
-        SnapshotInfo(
-            snapshot_id=r[0],
-            created_at=r[1],
-            connection_name=r[2],
-            table_count=r[3],
-        )
-        for r in rows
-    ]
-
-
 def get_cost_daily_timeseries(
     state_db: BaseStateStore, days: int, connection_name: str = ""
 ) -> list[dict]:
@@ -512,17 +461,9 @@ def get_cost_daily_timeseries(
     return [{"day": day, "cost": cost} for day, cost in daily]
 
 
-@dataclass
-class LeastUsedTable:
-    schema_name: str
-    table_name: str
-    query_count: int
-    estimated_cost_usd: float
-
-
 def get_least_used_tables(
     state_db: BaseStateStore, connection_name: str = "", limit: int = 10
-) -> list[LeastUsedTable]:
+) -> list[LeastUsedTableModel]:
     """Get the least-queried tables from the latest cost run."""
     records = state_db.get_latest_cost(connection_name)
     if not records:
@@ -534,7 +475,7 @@ def get_least_used_tables(
         qc, cost = table_agg.get(key, (0, 0.0))
         table_agg[key] = (qc + r.query_count, cost + r.estimated_cost_usd)
     tables = [
-        LeastUsedTable(
+        LeastUsedTableModel(
             schema_name=s, table_name=t, query_count=qc, estimated_cost_usd=cost
         )
         for (s, t), (qc, cost) in table_agg.items()
@@ -556,22 +497,15 @@ def get_findings_by_connection(findings: list[Finding]) -> dict[str, tuple[int, 
     return result
 
 
-@dataclass
-class FindingsTrendPoint:
-    timestamp: str
-    errors: int
-    warnings: int
-
-
 def get_findings_trend(
     state_db: BaseStateStore, limit: int = 20
-) -> list[FindingsTrendPoint]:
+) -> list[FindingsTrendPointModel]:
     """Return error/warning counts per day, using the latest run each day."""
     from olly.dashboard.queries import get_findings_trend as _query_findings_trend
 
     rows = _query_findings_trend(state_db, limit)
     return [
-        FindingsTrendPoint(timestamp=r[0], errors=r[1], warnings=r[2])
+        FindingsTrendPointModel(timestamp=r[0], errors=r[1], warnings=r[2])
         for r in reversed(rows)
     ]
 

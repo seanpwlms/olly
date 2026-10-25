@@ -1,23 +1,235 @@
 import { Link } from "@tanstack/react-router";
 import { useConnection } from "../hooks/useConnection";
-import { useOverview } from "../hooks/queries";
-import { StatCard } from "../components/StatCard";
-import { StatsRow } from "../components/StatsRow";
+import { useFindings, useOverview } from "../hooks/queries";
 import { ErrorState } from "../components/ErrorState";
-import { SkeletonStatCards, SkeletonChart, SkeletonTable } from "../components/Skeleton";
-import { DispositionBar } from "../components/DispositionBar";
+import { SkeletonTable } from "../components/Skeleton";
 import { FindingsTrendChart } from "../components/FindingsTrendChart";
+import { DataTable, type Column } from "../components/DataTable";
+import { TableRef } from "../components/TableRef";
+import {
+  findingColumns,
+  findingExpanded,
+  findingRowKey,
+} from "../components/FindingsTable";
+import type { DispositionCounts, Finding, OverviewResponse, TableRow } from "../types";
 
-function formatTrend(current: number, previous: number | undefined): { trend: string; direction: "up" | "down" | "flat" } {
-  if (previous === undefined) return { trend: "", direction: "flat" };
-  const diff = current - previous;
-  if (diff === 0) return { trend: "No change", direction: "flat" };
-  const abs = Math.abs(diff);
-  const word = diff > 0 ? "more" : "fewer";
-  return {
-    trend: `${abs} ${word} since last check`,
-    direction: diff > 0 ? "up" : "down",
-  };
+/** Most untriaged findings shown on the overview before "View all". */
+const ATTENTION_LIMIT = 6;
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+const sectionHeading = "text-lg font-semibold text-gray-900 dark:text-gray-100";
+const sectionLink = "text-sm text-accent-700 dark:text-accent-300 hover:underline";
+
+/**
+ * Net change against the previous run. These are totals, not a per-finding
+ * diff, so the copy says "more/fewer than", never "new".
+ */
+function changeSentence(
+  current: { error_count: number; warning_count: number },
+  prev: { error_count: number; warning_count: number } | null,
+): string | null {
+  if (!prev) return null;
+  const parts: string[] = [];
+  for (const [now, before, word] of [
+    [current.error_count, prev.error_count, "error"],
+    [current.warning_count, prev.warning_count, "warning"],
+  ] as const) {
+    const diff = now - before;
+    if (diff !== 0) parts.push(`${plural(Math.abs(diff), word)} ${diff > 0 ? "more" : "fewer"}`);
+  }
+  return parts.length ? `${parts.join(", ")} than the previous check.` : "No change since the previous check.";
+}
+
+function Summary({ data }: { data: OverviewResponse }) {
+  const { stats, prev_stats } = data;
+  const healthy = stats.error_count === 0 && stats.warning_count === 0;
+  const change = changeSentence(stats, prev_stats);
+
+  return (
+    <header className="mb-8">
+      <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Overview</h1>
+      {healthy ? (
+        <p className="mt-2 flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+          <svg className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+            <path fillRule="evenodd" d="M16.7 5.3a1 1 0 0 1 0 1.4l-8 8a1 1 0 0 1-1.4 0l-4-4a1 1 0 1 1 1.4-1.4L8 12.58l7.3-7.3a1 1 0 0 1 1.4 0Z" clipRule="evenodd" />
+          </svg>
+          <span>
+            <span className="font-medium text-emerald-700 dark:text-emerald-400">All checks passing</span>
+            <span className="mx-2 text-gray-300 dark:text-gray-600" aria-hidden="true">·</span>
+            {stats.tables_monitored.toLocaleString()} tables monitored
+          </span>
+        </p>
+      ) : (
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+          {stats.error_count > 0 && (
+            <Link to="/findings" search={{ severity: "error" }} className="font-medium text-red-600 dark:text-red-400 hover:underline">
+              {plural(stats.error_count, "error")}
+            </Link>
+          )}
+          {stats.error_count > 0 && stats.warning_count > 0 && (
+            <span className="mx-2 text-gray-300 dark:text-gray-600" aria-hidden="true">·</span>
+          )}
+          {stats.warning_count > 0 && (
+            <Link to="/findings" search={{ severity: "warning" }} className="font-medium text-amber-700 dark:text-amber-400 hover:underline">
+              {plural(stats.warning_count, "warning")}
+            </Link>
+          )}
+          <span className="mx-2 text-gray-300 dark:text-gray-600" aria-hidden="true">·</span>
+          {stats.tables_monitored.toLocaleString()} tables monitored
+          {change && <span className="block mt-1">{change}</span>}
+        </p>
+      )}
+    </header>
+  );
+}
+
+/** "12 untriaged · 3 in progress · 5 completed", each linking to that slice of Findings. */
+function StatusCounts({ counts }: { counts: DispositionCounts }) {
+  const items = [
+    { key: "not_started", text: `${counts.not_started} untriaged` },
+    { key: "in_progress", text: `${counts.in_progress} in progress` },
+    { key: "completed", text: `${counts.completed} completed` },
+    { key: "no_action", text: `${counts.no_action} no action` },
+  ].filter((item, i) => i === 0 || !item.text.startsWith("0 "));
+  return (
+    <span className="text-sm text-gray-500 dark:text-gray-400">
+      {items.map((item, i) => (
+        <span key={item.key}>
+          {i > 0 && <span className="mx-2 text-gray-300 dark:text-gray-600" aria-hidden="true">·</span>}
+          <Link to="/findings" search={{ disposition: item.key }} className="hover:underline hover:text-gray-900 dark:hover:text-gray-100">
+            {item.text}
+          </Link>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Untriaged findings, errors first. Two small queries (errors, then warnings)
+ * so a long list of warnings can never push the errors off the first page.
+ */
+function NeedsAttention({ connection, counts }: { connection: string; counts: DispositionCounts }) {
+  const errors = useFindings({ connection, disposition: "not_started", severity: "error" });
+  const warnings = useFindings({ connection, disposition: "not_started", severity: "warning" });
+
+  const columns = findingColumns({ table: true }).filter((c) => c.key !== "when");
+
+  let body;
+  if (errors.isError || warnings.isError) {
+    body = <ErrorState message="Failed to load findings." onRetry={() => { void errors.refetch(); void warnings.refetch(); }} />;
+  } else if (!errors.data || !warnings.data) {
+    body = <SkeletonTable rows={4} cols={4} />;
+  } else {
+    const untriaged: Finding[] = [...errors.data.findings, ...warnings.data.findings].slice(0, ATTENTION_LIMIT);
+    const total = errors.data.total + warnings.data.total;
+    body =
+      untriaged.length === 0 ? (
+        <p className="py-6 text-sm text-gray-500 dark:text-gray-400">
+          Every finding has a status. Nothing is waiting for triage.
+        </p>
+      ) : (
+        <>
+          <DataTable
+            data={untriaged}
+            columns={columns}
+            rowKey={findingRowKey}
+            expandedContent={findingExpanded}
+            className="mb-2"
+          />
+          {total > untriaged.length && (
+            <Link to="/findings" search={{ disposition: "not_started" }} className={sectionLink}>
+              View all {total} untriaged findings
+            </Link>
+          )}
+        </>
+      );
+  }
+
+  return (
+    <section className="mb-10">
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+        <h2 className={sectionHeading}>Needs attention</h2>
+        <StatusCounts counts={counts} />
+      </div>
+      {body}
+    </section>
+  );
+}
+
+const tableColumns: Column<TableRow>[] = [
+  { key: "table", header: "Table", render: (t) => <TableRef schema={t.schema} table={t.table} /> },
+  {
+    key: "issues",
+    header: "Open issues",
+    align: "right",
+    render: (t) => (
+      <span className="whitespace-nowrap">
+        {t.error_count > 0 && (
+          <span className="font-medium text-red-600 dark:text-red-400">{plural(t.error_count, "error")}</span>
+        )}
+        {t.error_count > 0 && t.warning_count > 0 && <span className="text-gray-500 dark:text-gray-400">, </span>}
+        {t.warning_count > 0 && (
+          <span className="font-medium text-amber-700 dark:text-amber-400">{plural(t.warning_count, "warning")}</span>
+        )}
+      </span>
+    ),
+  },
+];
+
+function TablesWithIssues({ tables }: { tables: TableRow[] }) {
+  if (tables.length === 0) return null;
+  return (
+    <section className="mb-10">
+      <div className="mb-3 flex items-baseline justify-between gap-4">
+        <h2 className={sectionHeading}>Tables with issues</h2>
+        <Link to="/tables" className={sectionLink}>All tables</Link>
+      </div>
+      <DataTable data={tables} columns={tableColumns} rowKey={(t) => `${t.schema}.${t.table}`} className="" />
+    </section>
+  );
+}
+
+/** dbt and per-connection status as one line each, linking to their pages. */
+function Elsewhere({ data }: { data: OverviewResponse }) {
+  const { dbt_stats, findings_by_connection } = data;
+  const connections = Object.entries(findings_by_connection);
+  const dbtIssues = dbt_stats.error_count + dbt_stats.warning_count;
+  if (dbtIssues === 0 && connections.length <= 1) return null;
+
+  return (
+    <ul className="mb-8 space-y-1.5 text-sm text-gray-600 dark:text-gray-400">
+      {dbtIssues > 0 && (
+        <li>
+          <Link to="/dbt" className="hover:underline">
+            dbt:{" "}
+            {dbt_stats.error_count > 0 && (
+              <span className="font-medium text-red-600 dark:text-red-400">{plural(dbt_stats.error_count, "failure")}</span>
+            )}
+            {dbt_stats.error_count > 0 && dbt_stats.warning_count > 0 && ", "}
+            {dbt_stats.warning_count > 0 && (
+              <span className="font-medium text-amber-700 dark:text-amber-400">{plural(dbt_stats.warning_count, "warning")}</span>
+            )}{" "}
+            in the latest run
+          </Link>
+        </li>
+      )}
+      {connections.length > 1 &&
+        connections.map(([conn, counts]) => (
+          <li key={conn}>
+            <Link to="/findings" search={{ connection: conn }} className="hover:underline">
+              <span className="font-mono">{conn}</span>:{" "}
+              {counts.errors === 0 && counts.warnings === 0
+                ? "no issues"
+                : [counts.errors > 0 && plural(counts.errors, "error"), counts.warnings > 0 && plural(counts.warnings, "warning")]
+                    .filter(Boolean)
+                    .join(", ")}
+            </Link>
+          </li>
+        ))}
+    </ul>
+  );
 }
 
 export function IndexPage() {
@@ -25,153 +237,21 @@ export function IndexPage() {
   const { data, isLoading, isError, refetch } = useOverview(connection);
 
   if (isError) return <ErrorState message="Failed to load dashboard data." onRetry={() => void refetch()} />;
-  if (isLoading || !data) return <><SkeletonStatCards count={3} /><SkeletonChart /><SkeletonTable rows={5} cols={4} /></>;
+  if (isLoading || !data) return <SkeletonTable rows={6} cols={4} />;
 
-  const { stats, dbt_stats, findings_by_connection, findings_trend, top_tables, prev_stats, disposition_counts } = data;
-
-  const errorTrend = formatTrend(stats.error_count, prev_stats?.error_count);
-  const warningTrend = formatTrend(stats.warning_count, prev_stats?.warning_count);
-
-  const isHealthy = stats.error_count === 0 && stats.warning_count === 0;
+  const healthy = data.stats.error_count === 0 && data.stats.warning_count === 0;
 
   return (
     <>
-      {isHealthy && (
-        <div className="flex items-center gap-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950 px-5 py-4 mb-4">
-          <svg className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
-          </svg>
-          <div>
-            <span className="text-sm font-medium text-emerald-800 dark:text-emerald-300">All checks passing</span>
-            {stats.last_check_time && (
-              <span className="text-xs text-emerald-600 dark:text-emerald-400 ml-2">
-                Last check: {stats.last_check_time.slice(0, 16).replace("T", " ")}
-              </span>
-            )}
-          </div>
-        </div>
+      <Summary data={data} />
+      {!healthy && (
+        <>
+          <NeedsAttention connection={connection} counts={data.disposition_counts} />
+          <TablesWithIssues tables={data.top_tables} />
+        </>
       )}
-
-      <StatsRow>
-        <StatCard
-          value={stats.error_count}
-          label="Errors"
-          variant="error"
-          link={{ to: "/findings", search: { severity: "error" } }}
-          trend={errorTrend.trend}
-          trendDirection={errorTrend.direction}
-        />
-        <StatCard
-          value={stats.warning_count}
-          label="Warnings"
-          variant="warning"
-          link={{ to: "/findings", search: { severity: "warning" } }}
-          trend={warningTrend.trend}
-          trendDirection={warningTrend.direction}
-        />
-        <StatCard value={stats.tables_monitored} label="Tables Monitored" link={{ to: "/tables" }} />
-        {(dbt_stats.error_count > 0 || dbt_stats.warning_count > 0) && (
-          <StatCard
-            value={dbt_stats.error_count + dbt_stats.warning_count}
-            label="dbt Issues"
-            variant={dbt_stats.error_count > 0 ? "error" : "warning"}
-            link={{ to: "/dbt" }}
-          />
-        )}
-      </StatsRow>
-
-      {!isHealthy && disposition_counts && (
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Disposition Status</h2>
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm px-5 py-4">
-            <DispositionBar counts={disposition_counts} />
-          </div>
-        </section>
-      )}
-
-      {Object.keys(findings_by_connection).length > 1 && (
-        <section className="mb-6">
-          <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Findings by Connection</h2>
-          <StatsRow>
-            {Object.entries(findings_by_connection).map(([conn, counts]) => (
-              <Link
-                key={conn}
-                to="/findings"
-                search={{ connection: conn }}
-                className="no-underline text-inherit block flex-1 min-w-[140px]"
-              >
-                <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm px-5 py-4 hover:shadow-md transition-shadow">
-                  <div className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wide">{conn}</div>
-                  <div className="flex gap-2 mt-1.5">
-                    {counts.errors > 0 && (
-                      <span className="text-sm font-semibold text-red-600 dark:text-red-400">
-                        {counts.errors} error{counts.errors !== 1 ? "s" : ""}
-                      </span>
-                    )}
-                    {counts.warnings > 0 && (
-                      <span className="text-sm font-semibold text-amber-600 dark:text-amber-400">
-                        {counts.warnings} warning{counts.warnings !== 1 ? "s" : ""}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </StatsRow>
-        </section>
-      )}
-
-      <FindingsTrendChart data={findings_trend} />
-
-      {top_tables.length > 0 && (
-        <section className="mb-6">
-          <div className="flex justify-between items-center mb-3">
-            <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Tables with Issues</h2>
-            <Link to="/tables" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">View all</Link>
-          </div>
-          <table className="w-full bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
-            <thead>
-              <tr className="bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Table</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Errors</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Warnings</th>
-                <th className="px-4 py-3 text-right text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Rows</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-              {top_tables.map((t) => (
-                <tr key={`${t.schema}.${t.table}`} className="hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-                  <td className="px-4 py-3 text-sm">
-                    <Link
-                      to="/table/$schema/$table"
-                      params={{ schema: t.schema, table: t.table }}
-                      className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
-                    >
-                      {t.schema}.{t.table}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-sm text-right">
-                    {t.error_count > 0 ? <span className="text-red-600 dark:text-red-400 font-semibold">{t.error_count}</span> : <span className="text-gray-300 dark:text-gray-600">0</span>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-right">
-                    {t.warning_count > 0 ? <span className="text-amber-600 dark:text-amber-400 font-semibold">{t.warning_count}</span> : <span className="text-gray-300 dark:text-gray-600">0</span>}
-                  </td>
-                  <td className="px-4 py-3 text-sm text-right text-gray-600 dark:text-gray-400">
-                    {t.row_count != null ? t.row_count.toLocaleString() : "\u2014"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-      )}
-
-      <p className="text-xs text-gray-500 dark:text-gray-400">
-        Last check:{" "}
-        {stats.last_check_time
-          ? stats.last_check_time.slice(0, 16).replace("T", " ")
-          : "\u2014"}
-      </p>
+      <Elsewhere data={data} />
+      <FindingsTrendChart data={data.findings_trend} />
     </>
   );
 }
