@@ -15,5 +15,5 @@ export function EmptyState({ message, variant = "empty" }: EmptyStateProps) {
     );
   }
 
-  return <p className="text-center text-gray-400 py-8">{message}</p>;
+  return <p className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">{message}</p>;
 }

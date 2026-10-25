@@ -43,13 +43,13 @@ export function TablesPage() {
   return (
     <>
       <div className="flex justify-between items-center flex-wrap gap-2 mb-4">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-          Tables <span className="font-normal text-gray-500 dark:text-gray-400 text-base">({data.total})</span>
+        <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
+          Tables <span className="font-normal text-gray-500 dark:text-gray-400 text-sm">({data.total})</span>
         </h1>
         <input
           type="search"
-          placeholder="Filter tables..."
-          className="w-64 px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-colors"
+          placeholder="Filter tables…"
+          className="w-64 px-3 py-2 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-accent-500/40 focus:border-accent-400 transition-colors"
           value={search}
           onChange={(e) => setFilter({ search: e.target.value || undefined })}
         />

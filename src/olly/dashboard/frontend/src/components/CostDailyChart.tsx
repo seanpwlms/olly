@@ -23,15 +23,15 @@ export function CostDailyChart({ data }: CostDailyChartProps) {
   const grid = "var(--chart-grid)";
   const axis = "var(--chart-axis)";
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm p-5 mb-6">
-      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-4">
+    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5 mb-6">
+      <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
         Cost by Day (Last 30 Days)
       </h3>
       <ResponsiveContainer width="100%" height={data.length > 5 ? 290 : 250}>
         <LineChart data={data}>
           <CartesianGrid strokeDasharray="3 3" stroke={grid} />
-          <XAxis dataKey="day" tickFormatter={formatDateLabel} stroke={axis} tick={{ fontSize: 11 }} />
-          <YAxis tickFormatter={(v: number) => `$${v.toFixed(2)}`} stroke={axis} tick={{ fontSize: 11 }} />
+          <XAxis dataKey="day" tickFormatter={formatDateLabel} stroke={axis} tick={{ fontSize: 12 }} />
+          <YAxis tickFormatter={(v: number) => `$${v.toFixed(2)}`} stroke={axis} tick={{ fontSize: 12 }} />
           <Tooltip
             labelFormatter={(v: string) => formatDateLabel(v)}
             formatter={(v: number) => [`$${v.toFixed(2)}`, "Cost (USD)"]}
@@ -40,7 +40,7 @@ export function CostDailyChart({ data }: CostDailyChartProps) {
           <Line
             type="monotone"
             dataKey="cost"
-            stroke="#3b82f6"
+            stroke="var(--color-accent-500)"
             dot={{ r: 3 }}
             name="Cost"
           />

@@ -209,6 +209,8 @@ export interface FindingsResponse {
   total_pages: number;
   total: number;
   last_check_time: string | null;
+  /** Ids of every finding matching the filters, across all pages. */
+  all_ids: number[];
 }
 
 export interface TablesResponse {
@@ -249,6 +251,18 @@ export interface DbtResponse {
   severities: string[];
   execution_leaderboard: DbtExecutionLeaderboardEntry[];
   run_history: DbtRunHistoryPoint[];
+  configured: boolean;
+}
+
+export interface NavSection {
+  configured: boolean;
+  errors: number;
+  warnings: number;
+}
+
+export interface NavResponse {
+  sections: Record<string, NavSection>;
+  last_check_time: string | null;
 }
 
 export interface ConnectionsResponse {

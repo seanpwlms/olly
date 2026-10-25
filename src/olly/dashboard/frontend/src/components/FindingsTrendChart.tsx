@@ -56,9 +56,9 @@ export function FindingsTrendChart({ data }: { data: FindingsTrendPoint[] }) {
 
   return (
     <section className="mb-6">
-      <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-3">Findings Trend</h2>
-      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm p-4">
-        <ResponsiveContainer width="100%" height={280}>
+      <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">Findings over time</h2>
+      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
+        <ResponsiveContainer width="100%" height={200}>
           <AreaChart
             data={trendData}
             onClick={(state) => {
@@ -70,16 +70,16 @@ export function FindingsTrendChart({ data }: { data: FindingsTrendPoint[] }) {
             style={{ cursor: "pointer" }}
           >
             <CartesianGrid strokeDasharray="3 3" stroke={grid} />
-            <XAxis dataKey="label" tick={{ fontSize: 11 }} stroke={axis} tickFormatter={formatDateLabel} />
-            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} stroke={axis} />
+            <XAxis dataKey="label" tick={{ fontSize: 12 }} stroke={axis} tickFormatter={formatDateLabel} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 12 }} stroke={axis} />
             <Tooltip
               labelFormatter={(v: string) => formatDateLabel(v)}
               formatter={(v: number, name: string) => [v.toLocaleString(), name]}
               contentStyle={{ backgroundColor: "var(--chart-bg)", border: "1px solid var(--chart-grid)" }}
             />
             <Legend />
-            <Area type="monotone" dataKey="errors" name="Errors" stroke="#ef4444" fill="#fee2e2" strokeWidth={2} />
-            <Area type="monotone" dataKey="warnings" name="Warnings" stroke="#f59e0b" fill="#fef3c7" strokeWidth={2} />
+            <Area type="monotone" dataKey="errors" name="Errors" stroke="var(--color-red-500)" fill="var(--color-red-500)" fillOpacity={0.15} strokeWidth={2} />
+            <Area type="monotone" dataKey="warnings" name="Warnings" stroke="var(--color-amber-500)" fill="var(--color-amber-500)" fillOpacity={0.15} strokeWidth={2} />
             {trendData.length > 5 && (
               <Brush dataKey="label" height={24} stroke="var(--chart-axis)" fill="var(--chart-bg)" tickFormatter={formatDateLabel} />
             )}

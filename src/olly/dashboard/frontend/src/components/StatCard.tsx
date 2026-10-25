@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 
 interface StatCardLink {
@@ -6,66 +7,56 @@ interface StatCardLink {
 }
 
 interface StatCardProps {
-  value: string | number;
+  value: ReactNode;
   label: string;
+  /** Colors the value only; severity is never repeated as a stripe or border. */
   variant?: "error" | "warning" | "ok";
   link?: StatCardLink;
   trend?: string;
   trendDirection?: "up" | "down" | "flat";
-  size?: "default" | "hero";
 }
-
-const accentStyles: Record<string, string> = {
-  error: "border-l-4 border-l-red-400",
-  warning: "border-l-4 border-l-amber-400",
-  ok: "border-l-4 border-l-emerald-400",
-};
 
 const valueStyles: Record<string, string> = {
   error: "text-red-600 dark:text-red-400",
-  warning: "text-amber-600 dark:text-amber-400",
-  ok: "text-emerald-600 dark:text-emerald-400",
+  warning: "text-amber-700 dark:text-amber-400",
+  ok: "text-emerald-700 dark:text-emerald-400",
 };
 
 const trendColors: Record<string, Record<string, string>> = {
-  error: { up: "text-red-500", down: "text-emerald-500", flat: "text-gray-400" },
-  warning: { up: "text-amber-500", down: "text-emerald-500", flat: "text-gray-400" },
-  ok: { up: "text-emerald-500", down: "text-gray-400", flat: "text-gray-400" },
+  error: { up: "text-red-600 dark:text-red-400", down: "text-emerald-700 dark:text-emerald-400", flat: "text-gray-500 dark:text-gray-400" },
+  warning: { up: "text-amber-700 dark:text-amber-400", down: "text-emerald-700 dark:text-emerald-400", flat: "text-gray-500 dark:text-gray-400" },
+  ok: { up: "text-emerald-700 dark:text-emerald-400", down: "text-gray-500 dark:text-gray-400", flat: "text-gray-500 dark:text-gray-400" },
 };
 
-export function StatCard({ value, label, variant, link, trend, trendDirection, size = "default" }: StatCardProps) {
-  const accent = variant ? accentStyles[variant] : "";
-  const valueColor = variant ? valueStyles[variant] : "text-gray-900 dark:text-white";
+/** One cell of a StatsRow strip. Not a card: StatsRow draws the frame and dividers. */
+export function StatCard({ value, label, variant, link, trend, trendDirection }: StatCardProps) {
+  const valueColor = variant ? valueStyles[variant] : "text-gray-900 dark:text-gray-100";
   const trendColor =
     trend && trendDirection && variant
-      ? trendColors[variant]?.[trendDirection] ?? "text-gray-400"
-      : "text-gray-400";
-
-  const isHero = size === "hero";
+      ? trendColors[variant]?.[trendDirection] ?? "text-gray-500 dark:text-gray-400"
+      : "text-gray-500 dark:text-gray-400";
 
   const content = (
-    <div
-      className={`bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm hover:shadow-md transition-shadow ${accent} ${isHero ? "px-6 py-5" : "px-5 py-4"} ${isHero ? "" : "flex-1 min-w-[140px]"}`}
-    >
-      <div className={`font-bold ${valueColor} ${isHero ? "text-4xl" : "text-2xl"}`}>{value}</div>
-      <div className={`text-gray-500 dark:text-gray-400 uppercase tracking-wide mt-1 ${isHero ? "text-sm" : "text-xs"}`}>{label}</div>
-      {trend && (
-        <div className={`mt-1 ${trendColor} ${isHero ? "text-sm" : "text-xs"}`}>{trend}</div>
-      )}
-    </div>
+    <>
+      <div className="text-sm text-gray-500 dark:text-gray-400">{label}</div>
+      <div className={`mt-0.5 text-2xl font-semibold ${valueColor}`}>{value}</div>
+      {trend && <div className={`mt-0.5 text-xs ${trendColor}`}>{trend}</div>}
+    </>
   );
+
+  const cell = "block bg-white dark:bg-gray-900 px-4 py-3";
 
   if (link) {
     return (
       <Link
         to={link.to}
         search={link.search}
-        className={`no-underline text-inherit block ${isHero ? "" : "flex-1 min-w-[140px]"}`}
+        className={`${cell} no-underline text-inherit hover:bg-gray-50 dark:hover:bg-gray-800/60 transition-colors`}
       >
         {content}
       </Link>
     );
   }
 
-  return content;
+  return <div className={cell}>{content}</div>;
 }

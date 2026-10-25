@@ -308,6 +308,9 @@ class FindingsResponse(BaseModel):
     total_pages: int
     total: int
     last_check_time: str | None
+    # Ids of every finding matching the current filters, not just this page,
+    # so the UI can offer a select-all that spans pagination.
+    all_ids: list[int] = []
 
 
 class TablesResponse(BaseModel):
@@ -356,6 +359,7 @@ class DbtResponse(BaseModel):
     severities: list[str]
     execution_leaderboard: list[DbtExecutionLeaderboardModel] = []
     run_history: list[DbtRunHistoryPointModel] = []
+    configured: bool = True
 
 
 class ContractsResponse(BaseModel):
@@ -373,6 +377,21 @@ class IntegrityResponse(BaseModel):
     fail_count: int
     total_count: int
     configured: bool
+    last_check_time: str | None
+
+
+class NavSectionModel(BaseModel):
+    """Badge state for one sidebar nav item."""
+
+    configured: bool = True
+    errors: int = 0
+    warnings: int = 0
+
+
+class NavResponse(BaseModel):
+    """Counts and configuration state for every badged nav section."""
+
+    sections: dict[str, NavSectionModel]
     last_check_time: str | None
 
 

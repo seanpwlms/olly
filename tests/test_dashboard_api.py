@@ -263,3 +263,58 @@ def test_api_disposition_history(dashboard_client):
     assert data["finding_id"] == 1
     assert "current_disposition" in data
     assert "history" in data
+
+
+def test_api_nav(dashboard_client):
+    resp = dashboard_client.get("/api/nav")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sections"]["findings"] == {
+        "configured": True,
+        "errors": 1,
+        "warnings": 1,
+    }
+    assert data["last_check_time"] is not None
+
+
+def test_api_nav_unconfigured_sections(dashboard_client):
+    """Bare config leaves contracts, integrity, and dbt switched off."""
+    data = dashboard_client.get("/api/nav").json()
+    for name in ("contracts", "integrity", "dbt"):
+        assert data["sections"][name]["configured"] is False
+
+
+def test_api_nav_reports_configured_sections(dashboard_client, monkeypatch):
+    from olly.config import OllyConfig
+
+    config = OllyConfig()
+    config.contracts.module = "contracts.py"
+    config.integrity.module = "integrity.py"
+    config.dbt.run_results_path = "target/run_results.json"
+    monkeypatch.setattr("olly.dashboard.api_routes.load_config", lambda: config)
+
+    data = dashboard_client.get("/api/nav").json()
+    for name in ("contracts", "integrity", "dbt"):
+        assert data["sections"][name]["configured"] is True
+
+
+def test_api_dbt_not_configured(dashboard_client):
+    resp = dashboard_client.get("/api/dbt")
+    assert resp.status_code == 200
+    assert resp.json()["configured"] is False
+
+
+def test_api_findings_returns_all_ids(dashboard_client):
+    """all_ids covers the whole filtered set so the UI can select across pages."""
+    data = dashboard_client.get("/api/findings").json()
+    assert len(data["all_ids"]) == data["total"]
+    assert all(isinstance(i, int) for i in data["all_ids"])
+    page_ids = [f["id"] for f in data["findings"]]
+    assert set(page_ids).issubset(set(data["all_ids"]))
+
+
+def test_api_findings_all_ids_respects_filters(dashboard_client):
+    data = dashboard_client.get("/api/findings?severity=error").json()
+    assert len(data["all_ids"]) == data["total"]
+    unfiltered = dashboard_client.get("/api/findings").json()
+    assert len(data["all_ids"]) < len(unfiltered["all_ids"])

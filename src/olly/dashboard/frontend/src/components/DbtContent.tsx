@@ -1,3 +1,4 @@
+import { formatDuration } from "../utils/format";
 import { useState } from "react";
 import { useConnection } from "../hooks/useConnection";
 import { useDbt } from "../hooks/queries";
@@ -9,22 +10,16 @@ import { DbtRunTrendChart } from "./DbtRunTrendChart";
 import { CompiledSqlModal } from "./CompiledSqlModal";
 import { Pagination } from "./Pagination";
 import { EmptyState } from "./EmptyState";
+import { NotConfigured } from "./NotConfigured";
 import { ErrorState } from "./ErrorState";
 import { SkeletonStatCards, SkeletonTable } from "./Skeleton";
 import type { DbtFinding } from "../types";
 
 const PAGE_SIZE = 50;
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s.toFixed(0)}s`;
-}
-
 const tabs = [
   { key: "overview", label: "Overview" },
-  { key: "nodes", label: "All Nodes" },
+  { key: "nodes", label: "All nodes" },
 ] as const;
 
 type TabKey = (typeof tabs)[number]["key"];
@@ -48,6 +43,15 @@ export function DbtContent() {
   if (isError) return <ErrorState message="Failed to load dbt results." onRetry={() => void refetch()} />;
   if (isLoading || !data) return <><SkeletonStatCards count={5} /><SkeletonTable rows={5} cols={4} /></>;
 
+  if (!data.configured) {
+    return (
+      <NotConfigured
+        description="Point Olly at your dbt run_results.json and it will surface failed models and tests, slow nodes, and run-over-run timing regressions."
+        snippet={'[dbt]\nrun_results_path = "target/run_results.json"'}
+      />
+    );
+  }
+
   const { dbt_stats, dbt_findings, resource_types, severities, execution_leaderboard, run_history } = data;
 
   const onShowSql = (sql: string, nodeId: string, dbtRunId: number | null) =>
@@ -64,7 +68,7 @@ export function DbtContent() {
               className={`px-3 py-1.5 text-sm font-medium rounded-lg transition-colors ${
                 activeTab === tab.key
                   ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                  : "text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-800"
+                  : "text-gray-500 dark:text-gray-400 hover:text-gray-700 hover:bg-gray-100 dark:hover:text-gray-300 dark:hover:bg-gray-800"
               }`}
             >
               {tab.label}
@@ -149,7 +153,7 @@ function OverviewTab({
         <StatCard value={dbt_stats.warning_count} label="Warnings" variant="warning" />
         <StatCard value={dbt_stats.pass_count} label="Passed" variant="ok" />
         <StatCard value={dbt_stats.total_count} label="Total" />
-        <StatCard value={formatDuration(dbt_stats.total_execution_time)} label="Total Time" />
+        <StatCard value={formatDuration(dbt_stats.total_execution_time)} label="Total time" />
       </StatsRow>
 
       {run_history.length >= 2 && <DbtRunTrendChart data={run_history} />}
@@ -163,7 +167,7 @@ function OverviewTab({
           <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Issues</h2>
           <div className="flex flex-wrap gap-2">
             <select
-              className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
+              className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-accent-500/40 focus:border-accent-400"
               value={rtFilter}
               onChange={(e) => setRtFilter(e.target.value)}
             >
@@ -171,7 +175,7 @@ function OverviewTab({
               {resource_types.map((rt) => <option key={rt} value={rt}>{rt}</option>)}
             </select>
             <select
-              className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
+              className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-accent-500/40 focus:border-accent-400"
               value={sevFilter}
               onChange={(e) => setSevFilter(e.target.value)}
             >
@@ -237,13 +241,13 @@ function AllNodesTab({
         <div className="flex flex-wrap gap-2">
           <input
             type="search"
-            placeholder="Search nodes..."
-            className="min-w-[180px] px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400 transition-colors"
+            placeholder="Search nodes…"
+            className="min-w-[180px] px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-accent-500/40 focus:border-accent-400 transition-colors"
             value={allSearch}
             onChange={(e) => { setAllSearch(e.target.value); setPage(1); }}
           />
           <select
-            className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500/40 focus:border-blue-400"
+            className="px-3 py-1.5 border border-gray-200 dark:border-gray-700 rounded-lg text-sm bg-white dark:bg-gray-900 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-accent-500/40 focus:border-accent-400"
             value={allRtFilter}
             onChange={(e) => { setAllRtFilter(e.target.value); setPage(1); }}
           >

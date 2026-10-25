@@ -32,7 +32,7 @@ export function DbtFindingsTable({ findings, onShowSql, compact }: DbtFindingsTa
         <span className="break-all">
           {shortNodeId(f.unique_id)}
           {typeof f.details.cascade_root === "string" && (
-            <span className="ml-1.5 px-1.5 py-0.5 text-[10px] bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded">
+            <span className="ml-1.5 px-1.5 py-0.5 text-xs bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded">
               cascade
             </span>
           )}
@@ -65,7 +65,7 @@ export function DbtFindingsTable({ findings, onShowSql, compact }: DbtFindingsTa
               </span>
             );
           }
-          return <span className="text-gray-400">&mdash;</span>;
+          return <span className="text-gray-500 dark:text-gray-400">&mdash;</span>;
         },
       },
       {
@@ -76,7 +76,7 @@ export function DbtFindingsTable({ findings, onShowSql, compact }: DbtFindingsTa
             {f.description}
             {typeof f.details.compiled_code === "string" && onShowSql && (
               <button
-                className="ml-2 px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-blue-600 dark:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+                className="ml-2 px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-accent-600 dark:text-accent-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
                 onClick={() =>
                   onShowSql(f.details.compiled_code as string, f.unique_id, f.dbt_run_id ?? null)
                 }
@@ -96,7 +96,7 @@ export function DbtFindingsTable({ findings, onShowSql, compact }: DbtFindingsTa
       render: (f) =>
         typeof f.details.compiled_code === "string" && onShowSql ? (
           <button
-            className="px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-blue-600 dark:text-blue-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+            className="px-2 py-0.5 text-xs bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded text-accent-600 dark:text-accent-400 hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors cursor-pointer"
             onClick={() =>
               onShowSql(f.details.compiled_code as string, f.unique_id, f.dbt_run_id ?? null)
             }
@@ -104,7 +104,7 @@ export function DbtFindingsTable({ findings, onShowSql, compact }: DbtFindingsTa
             View
           </button>
         ) : (
-          <span className="text-gray-400">&mdash;</span>
+          <span className="text-gray-500 dark:text-gray-400">&mdash;</span>
         ),
     });
   }
@@ -114,9 +114,6 @@ export function DbtFindingsTable({ findings, onShowSql, compact }: DbtFindingsTa
       data={findings}
       columns={columns}
       rowKey={(f) => f.unique_id}
-      rowBorderColor={(f) =>
-        f.severity === "error" ? "error" : f.severity === "warning" ? "warning" : "success"
-      }
       emptyMessage="No dbt findings"
     />
   );

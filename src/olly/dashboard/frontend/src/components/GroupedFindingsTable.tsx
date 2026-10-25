@@ -1,11 +1,14 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { Badge } from "./Badge";
-import { DispositionSelect } from "./DispositionSelect";
-import { DispositionHistory } from "./DispositionHistory";
-import { FindingDetails } from "./FindingDetails";
-import { BulkActionBar } from "./BulkActionBar";
-import { timeAgo } from "../utils/timeAgo";
+import { Chevron } from "./Chevron";
+import { DataTable } from "./DataTable";
+import { TableRef } from "./TableRef";
+import {
+  findingColumns,
+  findingExpanded,
+  findingRowClass,
+  findingRowKey,
+  findingSelection,
+} from "./FindingsTable";
 import type { Finding } from "../types";
 
 interface TableGroup {
@@ -43,36 +46,31 @@ function groupFindings(findings: Finding[]): TableGroup[] {
   return groups;
 }
 
-function getBorderClass(f: Finding): string {
-  if (f.disposition === "completed") return "border-l-emerald-400 dark:border-l-emerald-600";
-  if (f.disposition === "no_action") return "border-l-gray-300 dark:border-l-gray-600";
-  if (f.severity === "error") return "border-l-red-500";
-  if (f.severity === "warning") return "border-l-amber-500";
-  return "border-l-emerald-500";
-}
-
-function getRowOpacity(disposition: string): string {
-  if (disposition === "completed") return "opacity-50";
-  if (disposition === "no_action") return "opacity-60";
-  return "";
-}
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 interface GroupedFindingsTableProps {
   findings: Finding[];
+  /** Selection is owned by the page so it survives switching views. */
+  selected: Set<number>;
+  onSelectionChange: (next: Set<number>) => void;
 }
 
-export function GroupedFindingsTable({ findings }: GroupedFindingsTableProps) {
+export function GroupedFindingsTable({
+  findings,
+  selected: selectedIds,
+  onSelectionChange,
+}: GroupedFindingsTableProps) {
   const groups = groupFindings(findings);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [expandedFindingId, setExpandedFindingId] = useState<number | null>(null);
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   if (groups.length === 0) {
-    return <p className="text-center text-gray-400 py-8">No findings</p>;
+    return <p className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">No findings</p>;
   }
 
   const allKeys = groups.map((g) => `${g.schema}.${g.table}`);
   const allExpanded = allKeys.every((k) => expanded.has(k));
+  const columns = findingColumns({ table: false });
+  const selection = findingSelection(selectedIds, onSelectionChange);
 
   const toggleAllGroups = () => {
     setExpanded(allExpanded ? new Set() : new Set(allKeys));
@@ -87,121 +85,92 @@ export function GroupedFindingsTable({ findings }: GroupedFindingsTableProps) {
     });
   };
 
-  const toggleSelect = (id: number) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const toggleGroupSelect = (group: TableGroup) => {
     const groupIds = group.findings.map((f) => f.id).filter((id): id is number => id !== null);
     const allGroupSelected = groupIds.every((id) => selectedIds.has(id));
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      for (const id of groupIds) {
-        if (allGroupSelected) next.delete(id);
-        else next.add(id);
-      }
-      return next;
-    });
+    const next = new Set(selectedIds);
+    for (const id of groupIds) {
+      if (allGroupSelected) next.delete(id);
+      else next.add(id);
+    }
+    onSelectionChange(next);
   };
 
   return (
     <div className="mb-6">
-      <BulkActionBar selectedIds={selectedIds} onClear={() => setSelectedIds(new Set())} />
       <div className="flex justify-end mb-2">
         <button
+          type="button"
           onClick={toggleAllGroups}
-          className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors"
+          className="cursor-pointer text-sm text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 transition-colors"
         >
           {allExpanded ? "Collapse all" : "Expand all"}
         </button>
       </div>
-      <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm overflow-hidden">
+      <div className="border-t border-gray-200 dark:border-gray-800">
         {groups.map((group) => {
           const key = `${group.schema}.${group.table}`;
           const isOpen = expanded.has(key);
+          const panelId = `group-${key}`;
           const groupIds = group.findings.map((f) => f.id).filter((id): id is number => id !== null);
           const allGroupSelected = groupIds.length > 0 && groupIds.every((id) => selectedIds.has(id));
 
           return (
-            <div key={key} className="border-b border-gray-100 dark:border-gray-800 last:border-b-0">
-              <button
+            <section key={key} className="border-b border-gray-200 dark:border-gray-800">
+              {/* Row click toggles for mouse users; the chevron button is the accessible control. */}
+              <div
+                className="flex cursor-pointer items-center gap-3 px-3 py-2.5 hover:bg-gray-100/60 dark:hover:bg-gray-800/40 transition-colors"
                 onClick={() => toggle(key)}
-                className={`w-full flex items-center gap-3 px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left border-l-4 ${group.errors > 0 ? "border-l-red-500" : "border-l-amber-500"}`}
               >
-                <span onClick={(e) => { e.stopPropagation(); toggleGroupSelect(group); }} className="flex-shrink-0">
-                  <input
-                    type="checkbox"
-                    checked={allGroupSelected}
-                    readOnly
-                    className="rounded border-gray-300 dark:border-gray-600"
-                  />
-                </span>
-                <span className="text-gray-400 text-xs w-4 flex-shrink-0">
-                  {isOpen ? "\u25BC" : "\u25B6"}
-                </span>
-                <Link
-                  to="/table/$schema/$table"
-                  params={{ schema: group.schema, table: group.table }}
-                  className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline font-medium"
+                <input
+                  type="checkbox"
+                  checked={allGroupSelected}
+                  onChange={() => toggleGroupSelect(group)}
                   onClick={(e) => e.stopPropagation()}
+                  disabled={groupIds.length === 0}
+                  aria-label={`Select all findings for ${key}`}
+                  className="rounded border-gray-300 dark:border-gray-600"
+                />
+                <button
+                  type="button"
+                  aria-expanded={isOpen}
+                  aria-controls={panelId}
+                  aria-label={`${isOpen ? "Collapse" : "Expand"} ${key}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggle(key);
+                  }}
+                  className="flex cursor-pointer items-center rounded p-0.5 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                 >
-                  {group.schema}.{group.table}
-                </Link>
-                <span className="flex-1" />
-                {group.errors > 0 && (
-                  <Badge type="error">
-                    {group.errors} error{group.errors !== 1 ? "s" : ""}
-                  </Badge>
-                )}
-                {group.warnings > 0 && (
-                  <Badge type="warning">
-                    {group.warnings} warning{group.warnings !== 1 ? "s" : ""}
-                  </Badge>
-                )}
-              </button>
+                  <Chevron open={isOpen} />
+                </button>
+                <TableRef schema={group.schema} table={group.table} className="text-sm font-medium" />
+                <span className="ml-auto flex items-center gap-3 text-sm">
+                  {group.errors > 0 && (
+                    <span className="font-medium text-red-600 dark:text-red-400">{plural(group.errors, "error")}</span>
+                  )}
+                  {group.warnings > 0 && (
+                    <span className="font-medium text-amber-700 dark:text-amber-400">{plural(group.warnings, "warning")}</span>
+                  )}
+                </span>
+              </div>
 
               {isOpen && (
-                <div className="border-t border-gray-100 dark:border-gray-800">
-                  {group.findings.map((f, i) => (
-                    <div key={f.id ?? i}>
-                      <div
-                        className={`flex items-center gap-3 px-4 py-2.5 pl-11 text-sm hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors border-l-4 cursor-pointer ${getBorderClass(f)} ${getRowOpacity(f.disposition)}`}
-                        onClick={() => setExpandedFindingId(expandedFindingId === f.id ? null : f.id)}
-                      >
-                        {f.id !== null && (
-                          <span onClick={(e) => { e.stopPropagation(); toggleSelect(f.id!); }} className="flex-shrink-0">
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(f.id)}
-                              readOnly
-                              className="rounded border-gray-300 dark:border-gray-600"
-                            />
-                          </span>
-                        )}
-                        <span className="text-gray-500 dark:text-gray-400 w-20 flex-shrink-0">{f.check_type}</span>
-                        <span className="w-20 flex-shrink-0">
-                          <Badge type={f.severity}>{f.severity}</Badge>
-                        </span>
-                        <span className="text-gray-700 dark:text-gray-300 flex-1">{f.description}</span>
-                        <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap flex-shrink-0">{timeAgo(f.created_at)}</span>
-                        <DispositionSelect findingId={f.id} currentDisposition={f.disposition} />
-                      </div>
-                      {expandedFindingId === f.id && f.id !== null && (
-                        <div className="pl-11 pr-4 py-2 bg-gray-50 dark:bg-gray-800/50 border-l-4 border-l-gray-200 dark:border-l-gray-700">
-                          <FindingDetails finding={f} />
-                          <DispositionHistory findingId={f.id} />
-                        </div>
-                      )}
-                    </div>
-                  ))}
+                <div id={panelId} className="pl-9">
+                  <DataTable
+                    data={group.findings}
+                    columns={columns}
+                    rowKey={findingRowKey}
+                    rowClassName={findingRowClass}
+                    selection={selection}
+                    expandedContent={findingExpanded}
+                    hideHeader
+                    fixed
+                    className="mb-2 border-t border-gray-100 dark:border-gray-800/70"
+                  />
                 </div>
               )}
-            </div>
+            </section>
           );
         })}
       </div>

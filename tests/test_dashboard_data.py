@@ -384,3 +384,41 @@ def test_get_findings_by_table():
     by_table = get_findings_by_table(findings)
     assert by_table[("main", "orders")] == (1, 1)
     assert by_table[("main", "customers")] == (1, 0)
+
+
+def test_build_nav_sections_counts_by_check_type():
+    from olly.config import OllyConfig
+    from olly.dashboard.data import build_nav_sections
+    from olly.models import DbtFinding, Finding
+
+    findings = [
+        Finding("schema", "error", "main", "orders", "col added"),
+        Finding("contracts", "error", "main", "orders", "type drift"),
+        Finding("contracts", "warning", "main", "orders", "extra column"),
+        Finding("integrity", "warning", "main", "orders", "count mismatch"),
+    ]
+    dbt_findings = [
+        DbtFinding("model", "error", "model.a", "fail", 1.0, "model failed"),
+    ]
+
+    sections = build_nav_sections(findings, dbt_findings, OllyConfig())
+
+    assert sections["findings"].errors == 2
+    assert sections["findings"].warnings == 2
+    assert sections["contracts"].errors == 1
+    assert sections["contracts"].warnings == 1
+    assert sections["integrity"].errors == 0
+    assert sections["integrity"].warnings == 1
+    assert sections["dbt"].errors == 1
+
+
+def test_build_nav_sections_marks_unconfigured():
+    from olly.config import OllyConfig
+    from olly.dashboard.data import build_nav_sections
+
+    sections = build_nav_sections([], [], OllyConfig())
+
+    assert sections["findings"].configured is True
+    assert sections["contracts"].configured is False
+    assert sections["integrity"].configured is False
+    assert sections["dbt"].configured is False

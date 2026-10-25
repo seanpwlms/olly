@@ -30,6 +30,7 @@ from olly.dashboard.data import (
     get_volume_timeseries,
     hydrate_dispositions,
     build_cost_summary,
+    build_nav_sections,
     load_dbt_findings_from_db,
     load_findings_from_db,
 )
@@ -47,6 +48,7 @@ from olly.dashboard.schemas import (
     FindingsByConnection,
     FindingsResponse,
     IntegrityResponse,
+    NavResponse,
     OverviewResponse,
     PrevStatsModel,
     TableCostModel,
@@ -128,6 +130,21 @@ def api_connections():
     connections = _get_all_connections()
     current = connections[0] if connections else ""
     return ConnectionsResponse(connections=connections, current=current)
+
+
+@router.get("/nav", response_model=NavResponse)
+def api_nav(connection: str = Query("")):
+    config = load_config()
+    conn_name = _get_current_connection(connection, config)
+    with _state_db(conn_name, config) as (state_db, _conn):
+        findings = load_findings_from_db(state_db)
+        dbt_findings = load_dbt_findings_from_db(state_db)
+        last_check_time = state_db.get_last_check_time()
+
+    return NavResponse(
+        sections=build_nav_sections(findings, dbt_findings, config),
+        last_check_time=last_check_time,
+    )
 
 
 def _get_overview_data(
@@ -229,6 +246,7 @@ def api_findings(
         total_pages=total_pages,
         total=total,
         last_check_time=last_check_time,
+        all_ids=[f.id for f in filtered if f.id is not None],
     )
 
 
@@ -436,6 +454,7 @@ def api_dbt(connection: str = Query("")):
         severities=severities,
         execution_leaderboard=leaderboard,
         run_history=run_history,
+        configured=bool(config.dbt.run_results_path),
     )
 
 

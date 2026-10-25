@@ -1,5 +1,6 @@
 import { useRef, useEffect, useState } from "react";
 import { useDbtPreviousSql } from "../hooks/queries";
+import { CloseIcon } from "./CloseIcon";
 
 interface CompiledSqlModalProps {
   sql: string;
@@ -72,12 +73,12 @@ export function CompiledSqlModal({ sql, nodeId, dbtRunId, onClose }: CompiledSql
   return (
     <dialog
       ref={dialogRef}
-      className="border-none rounded-xl p-0 max-w-2xl w-[90vw] shadow-2xl backdrop:bg-black/50 backdrop:backdrop-blur-sm"
+      className="border-none rounded-lg p-0 max-w-2xl w-[90vw] shadow-xl backdrop:bg-black/40"
       onClose={onClose}
     >
       <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-100 dark:border-gray-700 bg-white dark:bg-gray-800">
         <span className="font-semibold text-sm text-gray-800 dark:text-gray-200">
-          Compiled SQL &mdash; {nodeId}
+          Compiled SQL &middot; {nodeId}
         </span>
         <div className="flex items-center gap-3">
           {!isLoading && hasPrevious && (
@@ -87,7 +88,7 @@ export function CompiledSqlModal({ sql, nodeId, dbtRunId, onClose }: CompiledSql
                 className={`px-2.5 py-1 text-xs font-medium transition-colors ${
                   !showDiff
                     ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                    : "bg-white dark:bg-gray-800 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                    : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 Current
@@ -97,7 +98,7 @@ export function CompiledSqlModal({ sql, nodeId, dbtRunId, onClose }: CompiledSql
                 className={`px-2.5 py-1 text-xs font-medium transition-colors ${
                   showDiff
                     ? "bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900"
-                    : "bg-white dark:bg-gray-800 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                    : "bg-white dark:bg-gray-800 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300"
                 }`}
               >
                 Diff
@@ -105,10 +106,11 @@ export function CompiledSqlModal({ sql, nodeId, dbtRunId, onClose }: CompiledSql
             </div>
           )}
           <button
-            className="text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-xl leading-none transition-colors"
+            className="rounded-lg p-1 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors cursor-pointer"
             onClick={onClose}
+            aria-label="Close"
           >
-            &times;
+            <CloseIcon className="h-5 w-5" />
           </button>
         </div>
       </div>
@@ -120,26 +122,26 @@ export function CompiledSqlModal({ sql, nodeId, dbtRunId, onClose }: CompiledSql
                 key={i}
                 className={
                   line.type === "added"
-                    ? "bg-green-900/40 text-green-300"
+                    ? "bg-emerald-900/40 text-emerald-300"
                     : line.type === "removed"
                     ? "bg-red-900/40 text-red-300"
                     : ""
                 }
               >
-                <span className="select-none text-gray-500 mr-2">
+                <span className="select-none text-gray-500 dark:text-gray-400 mr-2">
                   {line.type === "added" ? "+" : line.type === "removed" ? "-" : " "}
                 </span>
                 {line.text}
               </div>
             )) : (
-              <span className="text-gray-400">No changes from previous run</span>
+              <span className="text-gray-500 dark:text-gray-400">No changes from previous run</span>
             )}
           </code>
         </pre>
       ) : showDiff && hasPrevious && !sqlChanged ? (
         <pre className="m-0 p-5 bg-gray-900 text-gray-200 overflow-x-auto text-sm whitespace-pre-wrap rounded-b-xl max-h-[70vh] overflow-y-auto">
           <code>
-            <span className="text-gray-400">No changes from previous run</span>
+            <span className="text-gray-500 dark:text-gray-400">No changes from previous run</span>
           </code>
         </pre>
       ) : (

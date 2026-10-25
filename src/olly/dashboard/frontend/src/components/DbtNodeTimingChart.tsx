@@ -1,3 +1,4 @@
+import { formatDuration } from "../utils/format";
 import {
   LineChart,
   Line,
@@ -22,13 +23,6 @@ function formatDateLabel(v: string): string {
   });
 }
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s.toFixed(0)}s`;
-}
-
 function shortNodeId(uniqueId: string): string {
   const idx = uniqueId.indexOf(".");
   return idx >= 0 ? uniqueId.slice(idx + 1) : uniqueId;
@@ -50,9 +44,9 @@ export function DbtNodeTimingChart({ uniqueId }: Props) {
   const axis = "var(--chart-axis)";
 
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm p-4">
+    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-4">
       <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
-        {shortNodeId(uniqueId)} — Execution Time History
+        {shortNodeId(uniqueId)} &middot; execution time
       </h3>
       <ResponsiveContainer width="100%" height={180}>
         <LineChart data={data.timings}>
@@ -61,11 +55,11 @@ export function DbtNodeTimingChart({ uniqueId }: Props) {
             dataKey="timestamp"
             tickFormatter={formatDateLabel}
             stroke={axis}
-            tick={{ fontSize: 10 }}
+            tick={{ fontSize: 12 }}
           />
           <YAxis
             stroke={axis}
-            tick={{ fontSize: 10 }}
+            tick={{ fontSize: 12 }}
             tickFormatter={formatDuration}
           />
           <Tooltip
@@ -79,7 +73,7 @@ export function DbtNodeTimingChart({ uniqueId }: Props) {
           <Line
             type="monotone"
             dataKey="execution_time"
-            stroke="#8b5cf6"
+            stroke="var(--color-accent-500)"
             dot={{ r: 2 }}
             name="Duration"
           />

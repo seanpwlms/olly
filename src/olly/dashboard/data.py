@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from olly.config import load_config
+from olly.config import OllyConfig, load_config
 from olly.dashboard.schemas import (
     ColumnInfoModel,
     DashboardStatsModel,
@@ -10,6 +10,7 @@ from olly.dashboard.schemas import (
     FindingsStatsModel,
     FindingsTrendPointModel,
     LeastUsedTableModel,
+    NavSectionModel,
     SchemaDiffModel,
     TableHistoryModel,
     UsageStatsModel,
@@ -52,6 +53,52 @@ def get_dbt_stats(dbt_findings: list[DbtFinding]) -> DbtStatsModel:
         total_execution_time=sum(f.execution_time for f in dbt_findings),
         total_failures=total_failures,
     )
+
+
+def build_nav_sections(
+    findings: list[Finding],
+    dbt_findings: list[DbtFinding],
+    config: OllyConfig,
+) -> dict[str, NavSectionModel]:
+    """Build the per-section badge counts shown in the sidebar.
+
+    Deliberately reads only findings already loaded from state — it never
+    imports the user's contracts or integrity modules, so it stays cheap
+    enough to run on every page.
+    """
+
+    def counts(check_type: str) -> tuple[int, int]:
+        matched = [f for f in findings if f.check_type == check_type]
+        return (
+            sum(1 for f in matched if f.severity == "error"),
+            sum(1 for f in matched if f.severity == "warning"),
+        )
+
+    contract_errors, contract_warnings = counts("contracts")
+    integrity_errors, integrity_warnings = counts("integrity")
+    dbt_stats = get_dbt_stats(dbt_findings)
+
+    return {
+        "findings": NavSectionModel(
+            errors=sum(1 for f in findings if f.severity == "error"),
+            warnings=sum(1 for f in findings if f.severity == "warning"),
+        ),
+        "contracts": NavSectionModel(
+            configured=bool(config.contracts.module),
+            errors=contract_errors,
+            warnings=contract_warnings,
+        ),
+        "integrity": NavSectionModel(
+            configured=bool(config.integrity.module),
+            errors=integrity_errors,
+            warnings=integrity_warnings,
+        ),
+        "dbt": NavSectionModel(
+            configured=bool(config.dbt.run_results_path),
+            errors=dbt_stats.error_count,
+            warnings=dbt_stats.warning_count,
+        ),
+    }
 
 
 def get_dbt_execution_leaderboard(

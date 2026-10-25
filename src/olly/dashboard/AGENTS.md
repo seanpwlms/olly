@@ -21,6 +21,7 @@ frontend/       → React + TypeScript SPA (Vite + TanStack Router)
       useTheme.ts      → Light/dark/system theme preference (persisted to localStorage)
     api.ts      → Generic fetch helpers (fetchApi, putApi)
     types.ts    → TypeScript type definitions mirroring Pydantic response models
+    utils/time.ts → All timestamp formatting (timeAgo, formatTimestamp, formatDate, isCheckStale)
 static/dist/    → Built frontend assets (served by FastAPI)
 ```
 
@@ -31,6 +32,7 @@ All routes are prefixed with `/api`. JSON responses only.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/connections` | List all configured connections |
+| GET | `/api/nav` | Sidebar badge counts + configured flags per section, last check time |
 | GET | `/api/overview` | Dashboard home stats, trends, top tables |
 | GET | `/api/findings` | Paginated findings with filters (check_type, severity, schema, disposition, q) |
 | GET | `/api/tables` | Paginated table list with search/sort |
@@ -49,7 +51,7 @@ File-based routing via TanStack Router. Each file in `frontend/src/routes/` maps
 
 | File | URL | Description |
 |------|-----|-------------|
-| `index.tsx` | `/` | Overview dashboard |
+| `index.tsx` | `/` | Overview: summary line, untriaged findings (errors first), tables with issues, trend |
 | `findings.tsx` | `/findings` | Findings list with filters |
 | `tables.tsx` | `/tables` | Tables list |
 | `table.$schema.$table.tsx` | `/table/:schema/:table` | Table detail page |
@@ -57,7 +59,41 @@ File-based routing via TanStack Router. Each file in `frontend/src/routes/` maps
 | `dbt.tsx` | `/dbt` | dbt results |
 | `contracts.tsx` | `/contracts` | Contract validation results |
 | `integrity.tsx` | `/integrity` | Integrity sync results |
-| `__root.tsx` | — | Root layout with navigation |
+| `__root.tsx` | — | Root layout: left sidebar (desktop) / drawer (mobile) |
+
+## Layout & shared UI
+
+Navigation is a **left sidebar** (`components/Sidebar.tsx`), fixed at `lg:` and up
+and a hamburger drawer below that; `routes/__root.tsx` owns the shell. On
+desktop it collapses to an icon rail (badges become a dot, labels move to
+tooltips), persisted via `hooks/useSidebarCollapsed.ts`. The
+sidebar renders per-section error/warning badges and the "last check" trust
+signal from `/api/nav`, so pages should not repeat the last-check time in their
+own body.
+
+Shared pieces to reach for before writing new markup:
+
+- `DataTable` — the table primitive. Supports sortable headers, right-aligned
+  columns (`align`), per-column classes/widths (`className`), row classes
+  (`rowClassName`), checkbox selection (`selection`), click-to-expand rows
+  (`expandedContent`, which renders a keyboard-accessible chevron button),
+  `hideHeader` and `fixed` layout for stacked tables (the grouped findings
+  view). Do not hand-roll `<table>` markup; extend `DataTable` instead.
+- `StatsRow` + `StatCard` — one framed strip of stats with hairline dividers.
+  Severity colors the value only; no stripes, no per-card shadows.
+- `TableRef` — every `schema.table` identifier (monospace, linked).
+- `RelativeTime` — relative timestamps in lists (absolute time in a tooltip).
+  `utils/format.ts` holds shared number/duration formatters.
+- Visual rules (tokens, type, color, what not to do) live in `DESIGN.md`.
+  Run `npm run lint:design` in `frontend/` after UI changes.
+- `NotConfigured` — the empty state for a feature the user has not enabled.
+  Takes a description and the `olly.toml` snippet that turns it on. Sections
+  stay visible in the nav when unconfigured (marked "off") rather than hidden.
+- `FilterPopover` / `FilterSelect` + `ActiveFilters` — the filtering pattern:
+  secondary filters collapse into one popover, and everything currently applied
+  shows as removable chips with a "Clear all".
+- `utils/time.ts` — every timestamp goes through it. Never inline
+  `.slice(0, 16).replace("T", " ")`.
 
 ## Key Principles
 

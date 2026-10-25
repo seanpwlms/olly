@@ -1,6 +1,6 @@
 import { useDispositionHistory } from "../hooks/queries";
 import { Badge } from "./Badge";
-import { timeAgo } from "../utils/timeAgo";
+import { RelativeTime } from "./RelativeTime";
 import { DISPOSITION_LABELS } from "../constants/dispositions";
 
 interface DispositionHistoryProps {
@@ -11,11 +11,11 @@ export function DispositionHistory({ findingId }: DispositionHistoryProps) {
   const { data, isLoading } = useDispositionHistory(findingId);
 
   if (isLoading) {
-    return <p className="text-xs text-gray-400 py-2">Loading history...</p>;
+    return <p className="text-xs text-gray-500 dark:text-gray-400 py-2">Loading history…</p>;
   }
 
   if (!data || data.history.length === 0) {
-    return <p className="text-xs text-gray-400 py-2">No disposition changes yet</p>;
+    return <p className="text-xs text-gray-500 dark:text-gray-400 py-2">No status changes yet</p>;
   }
 
   return (
@@ -28,7 +28,7 @@ export function DispositionHistory({ findingId }: DispositionHistoryProps) {
               <Badge type={event.disposition}>
                 {DISPOSITION_LABELS[event.disposition] ?? event.disposition}
               </Badge>
-              <span className="text-gray-400">{timeAgo(event.created_at)}</span>
+              <RelativeTime value={event.created_at} className="text-gray-500 dark:text-gray-400" />
             </div>
             {event.comment && (
               <p className="text-gray-500 dark:text-gray-400 mt-0.5 truncate">

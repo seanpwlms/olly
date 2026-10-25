@@ -13,12 +13,20 @@ import type {
   DbtNodeTimingsResponse,
   DbtPreviousSqlResponse,
   DispositionHistoryResponse,
+  NavResponse,
 } from "../types";
 
 export function useConnections() {
   return useQuery({
     queryKey: ["connections"],
     queryFn: () => fetchApi<ConnectionsResponse>("/api/connections"),
+  });
+}
+
+export function useNav(connection: string) {
+  return useQuery({
+    queryKey: ["nav", connection],
+    queryFn: () => fetchApi<NavResponse>("/api/nav", { connection }),
   });
 }
 

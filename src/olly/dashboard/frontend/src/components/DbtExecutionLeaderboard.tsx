@@ -1,3 +1,4 @@
+import { formatDuration } from "../utils/format";
 import { useState } from "react";
 import { Badge } from "./Badge";
 import { DataTable, type Column } from "./DataTable";
@@ -13,17 +14,10 @@ function shortNodeId(uniqueId: string): string {
   return idx >= 0 ? uniqueId.slice(idx + 1) : uniqueId;
 }
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s.toFixed(0)}s`;
-}
-
 function timeBarColor(seconds: number): string {
   if (seconds >= 300) return "bg-red-500";
   if (seconds >= 60) return "bg-amber-500";
-  return "bg-blue-500";
+  return "bg-accent-500";
 }
 
 export function DbtExecutionLeaderboard({ entries }: Props) {
@@ -37,7 +31,7 @@ export function DbtExecutionLeaderboard({ entries }: Props) {
       key: "rank",
       header: "#",
       render: (e) => (
-        <span className="text-gray-400 text-xs">{rankMap.get(e.unique_id)}</span>
+        <span className="text-gray-500 dark:text-gray-400 text-xs">{rankMap.get(e.unique_id)}</span>
       ),
     },
     {
@@ -45,7 +39,7 @@ export function DbtExecutionLeaderboard({ entries }: Props) {
       header: "Node",
       render: (e) => (
         <button
-          className="text-blue-600 dark:text-blue-400 hover:underline text-left cursor-pointer"
+          className="text-accent-600 dark:text-accent-400 hover:underline text-left cursor-pointer"
           onClick={() =>
             setSelectedNode(selectedNode === e.unique_id ? null : e.unique_id)
           }

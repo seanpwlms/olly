@@ -25,7 +25,7 @@ export function TablesTable({ tables, sort, order, onSort }: TablesTableProps) {
         <Link
           to="/table/$schema/$table"
           params={{ schema: t.schema, table: t.table }}
-          className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 hover:underline"
+          className="font-mono text-accent-700 hover:underline dark:text-accent-300"
         >
           {t.table}
         </Link>
@@ -60,7 +60,7 @@ export function TablesTable({ tables, sort, order, onSort }: TablesTableProps) {
             </span>
           )}{" "}
           {t.warning_count > 0 && (
-            <span className="text-sm font-semibold text-amber-600 dark:text-amber-400">
+            <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
               {t.warning_count} warning{t.warning_count !== 1 ? "s" : ""}
             </span>
           )}

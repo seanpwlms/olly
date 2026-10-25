@@ -1,16 +1,85 @@
 @import "tailwindcss";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/*
+ * Design tokens — see ../../DESIGN.md.
+ * Neutrals are retinted toward the accent hue so surfaces and the accent read
+ * as one palette instead of stock Tailwind gray + stock Tailwind blue.
+ * Red / amber / emerald are reserved for severity and health; never decorative.
+ */
+/* static: emit every token as a CSS variable, so charts can use var(--color-*). */
+@theme static {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Accent: a low-chroma petrol blue. Links, focus, selection, primary actions. */
+  --color-accent-50: oklch(0.975 0.012 225);
+  --color-accent-100: oklch(0.945 0.025 225);
+  --color-accent-200: oklch(0.885 0.045 225);
+  --color-accent-300: oklch(0.8 0.07 225);
+  --color-accent-400: oklch(0.71 0.09 225);
+  --color-accent-500: oklch(0.6 0.1 225);
+  --color-accent-600: oklch(0.5 0.095 225);
+  --color-accent-700: oklch(0.43 0.085 225);
+  --color-accent-800: oklch(0.36 0.07 225);
+  --color-accent-900: oklch(0.3 0.055 225);
+  --color-accent-950: oklch(0.21 0.04 225);
+
+  /* Neutrals: near-gray with a faint accent tint. */
+  --color-gray-50: oklch(0.984 0.002 225);
+  --color-gray-100: oklch(0.965 0.004 225);
+  --color-gray-200: oklch(0.925 0.006 225);
+  --color-gray-300: oklch(0.87 0.008 225);
+  --color-gray-400: oklch(0.71 0.012 225);
+  --color-gray-500: oklch(0.555 0.014 225);
+  --color-gray-600: oklch(0.45 0.014 225);
+  --color-gray-700: oklch(0.375 0.013 225);
+  --color-gray-800: oklch(0.28 0.012 225);
+  --color-gray-900: oklch(0.21 0.01 225);
+  --color-gray-950: oklch(0.155 0.008 225);
+}
+
 :root {
-  --chart-grid: #e5e7eb;
-  --chart-axis: #9ca3af;
+  --chart-grid: var(--color-gray-200);
+  --chart-axis: var(--color-gray-500);
   --chart-bg: #ffffff;
 }
 
 .dark {
-  --chart-grid: #374151;
-  --chart-axis: #9ca3af;
-  --chart-bg: #111827;
+  --chart-grid: var(--color-gray-800);
+  --chart-axis: var(--color-gray-400);
+  --chart-bg: var(--color-gray-900);
   color-scheme: dark;
+}
+
+body {
+  font-family: var(--font-sans);
+  /* Counts and timings line up in columns. */
+  font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  /* One keyboard focus style for every control; components don't restate it. */
+  /* Fields that use the focus:ring pattern override this via focus:outline-none. */
+  :where(a, button, select, summary, [tabindex], input[type="checkbox"], input[type="radio"]):focus-visible {
+    outline: 2px solid var(--color-accent-500);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

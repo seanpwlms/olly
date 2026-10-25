@@ -1,3 +1,4 @@
+import { formatDuration } from "../utils/format";
 import {
   Line,
   XAxis,
@@ -19,13 +20,6 @@ function formatDateLabel(v: string): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  return `${m}m ${s.toFixed(0)}s`;
-}
-
 export function DbtRunTrendChart({ data }: Props) {
   if (data.length < 2) return null;
 
@@ -33,8 +27,8 @@ export function DbtRunTrendChart({ data }: Props) {
   const axis = "var(--chart-axis)";
 
   return (
-    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 shadow-sm p-5 mb-6">
-      <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase tracking-wide mb-4">
+    <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-800 p-5 mb-6">
+      <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
         Run Duration Trend
       </h2>
       <ResponsiveContainer width="100%" height={220}>
@@ -44,19 +38,19 @@ export function DbtRunTrendChart({ data }: Props) {
             dataKey="created_at"
             tickFormatter={formatDateLabel}
             stroke={axis}
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 12 }}
           />
           <YAxis
             yAxisId="time"
             stroke={axis}
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 12 }}
             tickFormatter={formatDuration}
           />
           <YAxis
             yAxisId="count"
             orientation="right"
             stroke={axis}
-            tick={{ fontSize: 11 }}
+            tick={{ fontSize: 12 }}
             hide
           />
           <Tooltip
@@ -74,14 +68,14 @@ export function DbtRunTrendChart({ data }: Props) {
           <Bar
             yAxisId="count"
             dataKey="error_count"
-            fill="#ef444440"
+            fill="var(--color-red-500)" fillOpacity={0.3}
             name="error_count"
           />
           <Line
             yAxisId="time"
             type="monotone"
             dataKey="elapsed_time"
-            stroke="#3b82f6"
+            stroke="var(--color-accent-500)"
             dot={{ r: 3 }}
             name="elapsed_time"
           />
