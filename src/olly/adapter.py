@@ -123,6 +123,9 @@ def connect_typed(conn: ConnectionConfig) -> Adapter:
         ValueError: If the connection type is not recognized.
     """
     logger.debug("Connecting via %s adapter", conn.type)
+    # Catalog row counts are exact on BigQuery/Snowflake (default on) but an
+    # estimate on Postgres (default off).
+    metadata_counts = conn.use_information_schema_row_counts
     if conn.type == "duckdb":
         from olly.adapters.duckdb import DuckDBAdapter
 
@@ -132,7 +135,11 @@ def connect_typed(conn: ConnectionConfig) -> Adapter:
 
         if conn.url is None:
             raise ValueError("Postgres connection requires 'url'")
-        return PostgresAdapter(conn.url, **conn.extras)
+        return PostgresAdapter(
+            conn.url,
+            use_information_schema_row_counts=bool(metadata_counts),
+            **conn.extras,
+        )
     if conn.type == "bigquery":
         from olly.adapters.bigquery import BigQueryAdapter
 
@@ -142,7 +149,7 @@ def connect_typed(conn: ConnectionConfig) -> Adapter:
             conn.project,
             dataset=conn.dataset,
             region=conn.region or "us",
-            use_information_schema_row_counts=conn.use_information_schema_row_counts,
+            use_information_schema_row_counts=metadata_counts is not False,
             **conn.extras,
         )
     if conn.type == "snowflake":
@@ -154,6 +161,7 @@ def connect_typed(conn: ConnectionConfig) -> Adapter:
             conn.account,
             database=conn.database,
             use_account_usage=conn.use_account_usage,
+            use_information_schema_row_counts=metadata_counts is not False,
             **conn.extras,
         )
     raise ValueError(f"Unsupported connection type: {conn.type}")

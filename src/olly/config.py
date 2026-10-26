@@ -46,7 +46,8 @@ class ConnectionConfig:
     region: str | None = None  # bigquery
     account: str | None = None  # snowflake
     database: str | None = None  # snowflake
-    use_information_schema_row_counts: bool = True  # bigquery
+    # bigquery/snowflake (default on), postgres (default off); None = adapter default
+    use_information_schema_row_counts: bool | None = None
     use_account_usage: bool = False  # snowflake
     extras: dict[str, Any] = field(default_factory=dict)
 
@@ -404,7 +405,7 @@ def _parse_connection_section(conn_raw: dict, context: str) -> ConnectionConfig:
         account=conn_raw.get("account"),
         database=conn_raw.get("database"),
         use_information_schema_row_counts=conn_raw.get(
-            "use_information_schema_row_counts", True
+            "use_information_schema_row_counts"
         ),
         use_account_usage=conn_raw.get("use_account_usage", False),
         extras=extras,
@@ -468,8 +469,6 @@ def _connection_to_dict(conn: ConnectionConfig) -> dict:
             conn_dict["dataset"] = conn.dataset
         if conn.region is not None:
             conn_dict["region"] = conn.region
-        if not conn.use_information_schema_row_counts:
-            conn_dict["use_information_schema_row_counts"] = False
     elif conn.type == "snowflake":
         if conn.account is not None:
             conn_dict["account"] = conn.account
@@ -477,6 +476,10 @@ def _connection_to_dict(conn: ConnectionConfig) -> dict:
             conn_dict["database"] = conn.database
         if conn.use_account_usage:
             conn_dict["use_account_usage"] = True
+    if conn.use_information_schema_row_counts is not None:
+        conn_dict["use_information_schema_row_counts"] = (
+            conn.use_information_schema_row_counts
+        )
     conn_dict.update(conn.extras)
     return conn_dict
 

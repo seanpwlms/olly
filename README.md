@@ -109,6 +109,7 @@ path = "warehouse.duckdb"          # omit for in-memory
 [connections.analytics]
 type = "postgres"
 url = "${DATABASE_URL}"
+use_information_schema_row_counts = false    # optional, default false (see below)
 
 # BigQuery
 [connections.warehouse]
@@ -123,10 +124,20 @@ type = "snowflake"
 account = "my-account"
 database = "my_db"                          # optional
 use_account_usage = false                   # optional, default false; required for usage checks
+use_information_schema_row_counts = true     # optional, default true
 user = "my-user"                            # optional, forwarded to Ibis
 role = "ANALYST"                            # optional, forwarded to Ibis
 warehouse = "COMPUTE_WH"                    # optional, forwarded to Ibis
 ```
+
+`use_information_schema_row_counts` controls whether `olly snapshot` reads row counts from catalog metadata or runs `COUNT(*)` on every table:
+
+| Backend | Metadata source | Default | Notes |
+|---|---|---|---|
+| BigQuery | `INFORMATION_SCHEMA` `row_count` | on | Exact; no table scans |
+| Snowflake | `INFORMATION_SCHEMA.TABLES.ROW_COUNT` (or `ACCOUNT_USAGE.TABLES` with `use_account_usage`) | on | Exact, one query per database. `ACCOUNT_USAGE` lags by up to ~90 minutes |
+| Postgres | `pg_stat_user_tables.n_live_tup` | off | Estimate, one query total. Reset by `pg_stat_reset()` and crash recovery, and **not maintained on read replicas** — only enable against a primary |
+| DuckDB | — | — | Always `COUNT(*)`; DuckDB's `estimated_size` ignores deleted rows |
 
 Any extra keys beyond the standard fields are forwarded as keyword arguments to the underlying Ibis `connect()` call. This lets you pass adapter-specific options (e.g. Snowflake `user`, `role`, `warehouse`, or DuckDB `read_only`) without Olly needing to know about them.
 

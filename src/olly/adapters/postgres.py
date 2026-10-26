@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import ibis
 
 from olly.adapters.base import BaseAdapter
-from olly.models import UsageRecord
+from olly.models import TableInfo, UsageRecord, VolumeRecord
+
+if TYPE_CHECKING:
+    from olly.adapter import ProgressCallback
 
 logger = logging.getLogger(__name__)
 
@@ -21,14 +24,24 @@ class PostgresAdapter(BaseAdapter):
 
     SUPPORTS_USAGE_HISTORY = True
 
-    def __init__(self, url: str, **connect_kwargs: Any) -> None:
+    def __init__(
+        self,
+        url: str,
+        *,
+        use_information_schema_row_counts: bool = False,
+        **connect_kwargs: Any,
+    ) -> None:
         """Initialize the adapter and open a Postgres connection via Ibis.
 
         Args:
             url: A ``postgresql://`` connection URL.
+            use_information_schema_row_counts: If True, read estimated row
+                counts from ``pg_stat_user_tables.n_live_tup`` instead of
+                running ``COUNT(*)`` queries.
             **connect_kwargs: Extra keyword arguments forwarded to
                 ``ibis.postgres.connect()``.
         """
+        self._use_information_schema_row_counts = use_information_schema_row_counts
         self._conn = ibis.postgres.connect(url=url, **connect_kwargs)
 
     def _cast_type(self) -> str:
@@ -43,6 +56,78 @@ class PostgresAdapter(BaseAdapter):
 
     def _list_ibis_tables(self, schema_name: str) -> list[str]:
         return self._conn.list_tables(schema=schema_name)
+
+    def fetch_row_counts(
+        self,
+        table_infos: list[TableInfo],
+        on_progress: ProgressCallback | None = None,
+    ) -> list[VolumeRecord]:
+        """Fetch row counts for the given tables, skipping views.
+
+        When ``use_information_schema_row_counts`` is enabled, reads
+        ``n_live_tup`` from ``pg_stat_user_tables`` in a single query instead
+        of running ``COUNT(*)`` per table. Partitioned and inheritance parents
+        sum their descendants, matching what ``COUNT(*)`` on the parent returns.
+
+        ``n_live_tup`` is an estimate maintained by the cumulative statistics
+        system: it is reset by ``pg_stat_reset()`` and crash recovery, and is
+        not maintained on hot-standby replicas.
+        """
+        if not self._use_information_schema_row_counts:
+            return super().fetch_row_counts(table_infos, on_progress)
+
+        logger.debug("Fetching estimated row counts for %d tables", len(table_infos))
+        tables = [ti for ti in table_infos if ti.table_type != "VIEW"]
+        if not tables:
+            return []
+        schema_filter = ", ".join(
+            f"'{s.replace(chr(39), chr(39) * 2)}'"
+            for s in sorted({ti.schema_name for ti in tables})
+        )
+        sql = (
+            "WITH RECURSIVE tree AS ("
+            "SELECT c.oid AS root, c.oid AS relid FROM pg_class c "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            f"WHERE n.nspname IN ({schema_filter}) AND c.relkind IN ('r', 'p', 'm') "
+            "UNION ALL "
+            "SELECT t.root, i.inhrelid FROM tree t "
+            "JOIN pg_inherits i ON i.inhparent = t.relid"
+            ") "
+            "SELECT n.nspname, c.relname, SUM(s.n_live_tup) "
+            "FROM tree t "
+            "JOIN pg_class c ON c.oid = t.root "
+            "JOIN pg_namespace n ON n.oid = c.relnamespace "
+            "LEFT JOIN pg_stat_user_tables s ON s.relid = t.relid "
+            "GROUP BY n.nspname, c.relname"
+        )
+        try:
+            rows = self._raw_sql(sql).fetchall()
+        except Exception as exc:
+            raise RuntimeError(
+                "Failed to fetch row counts from pg_stat_user_tables"
+            ) from exc
+        count_map = {(str(row[0]), str(row[1])): row[2] for row in rows}
+
+        records: list[VolumeRecord] = []
+        for ti in tables:
+            row_count = count_map.get((ti.schema_name, ti.table_name))
+            if row_count is None:
+                logger.warning(
+                    "Missing row count estimate for %s.%s, skipping",
+                    ti.schema_name,
+                    ti.table_name,
+                )
+                continue
+            records.append(
+                VolumeRecord(
+                    schema_name=ti.schema_name,
+                    table_name=ti.table_name,
+                    row_count=int(row_count),
+                )
+            )
+            if on_progress:
+                on_progress(ti.schema_name, ti.table_name)
+        return records
 
     def fetch_table_usage(
         self,

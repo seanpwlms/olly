@@ -212,6 +212,7 @@ path = "warehouse.duckdb"
 # Postgres
 type = "postgres"
 url = "postgresql://user:pass@host:5432/db"
+use_information_schema_row_counts = false    # optional, default false (n_live_tup estimate)
 
 # BigQuery
 type = "bigquery"
@@ -225,12 +226,15 @@ type = "snowflake"
 account = "my-account"
 database = "my_db"                          # optional
 use_account_usage = false                   # optional, default false
+use_information_schema_row_counts = true     # optional, default true
 user = "my-user"                            # optional, forwarded to ibis
 role = "ANALYST"                            # optional, forwarded to ibis
 warehouse = "COMPUTE_WH"                    # optional, forwarded to ibis
 ```
 
 Any extra keys beyond the known fields are forwarded as keyword arguments to the underlying Ibis `connect()` call.
+
+`use_information_schema_row_counts` defaults to `None` in `ConnectionConfig`; `connect_typed()` resolves it per adapter. It's on for BigQuery and Snowflake, where catalog counts are exact. It's off for Postgres, where `pg_stat_user_tables.n_live_tup` is an estimate that isn't maintained on replicas. DuckDB ignores it and always uses `COUNT(*)`, because `duckdb_tables().estimated_size` doesn't reflect deletes.
 
 ### Overrides
 

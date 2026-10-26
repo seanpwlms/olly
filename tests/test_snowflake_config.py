@@ -27,7 +27,8 @@ class TestConnectionConfigFields:
 
     def test_bigquery_defaults(self):
         conn = ConnectionConfig(type="bigquery", project="myproj")
-        assert conn.use_information_schema_row_counts is True
+        # None defers to the adapter's own default.
+        assert conn.use_information_schema_row_counts is None
         assert conn.dataset is None
 
 
@@ -74,6 +75,82 @@ class TestWriteConfigRoundTrip:
         assert loaded.connections["primary"].connection.account == "myaccount"
         assert loaded.connections["primary"].connection.database == "mydb"
         assert loaded.connections["primary"].connection.use_account_usage is True
+
+    def test_row_count_flag_omitted_when_unset(self, tmp_path):
+        nc = NamedConnection(
+            name="primary",
+            connection=ConnectionConfig(type="snowflake", account="a"),
+            selection=Selection(),
+        )
+        path = tmp_path / "olly.toml"
+        write_config(OllyConfig(connections={"primary": nc}), path)
+        assert "use_information_schema_row_counts" not in path.read_text()
+        loaded = load_config(path)
+        assert loaded.connections["primary"].connection.use_information_schema_row_counts is None
+
+    def test_row_count_flag_round_trips_for_postgres(self, tmp_path):
+        nc = NamedConnection(
+            name="primary",
+            connection=ConnectionConfig(
+                type="postgres",
+                url="postgresql://h/db",
+                use_information_schema_row_counts=True,
+            ),
+            selection=Selection(),
+        )
+        path = tmp_path / "olly.toml"
+        write_config(OllyConfig(connections={"primary": nc}), path)
+        loaded = load_config(path)
+        assert loaded.connections["primary"].connection.use_information_schema_row_counts is True
+
+
+def _capture_adapter(monkeypatch, target: str) -> list[dict]:
+    """Replace the adapter class at *target* with one that records its kwargs."""
+    constructed_with: list[dict] = []
+
+    class FakeAdapter:
+        def __init__(self, *args, **kwargs):
+            constructed_with.append(kwargs)
+
+    monkeypatch.setattr(target, FakeAdapter)
+    return constructed_with
+
+
+class TestRowCountFlagDefaults:
+    def test_snowflake_defaults_to_metadata(self, monkeypatch):
+        calls = _capture_adapter(monkeypatch, "olly.adapters.snowflake.SnowflakeAdapter")
+        connect_typed(ConnectionConfig(type="snowflake", account="a"))
+        assert calls[0]["use_information_schema_row_counts"] is True
+
+    def test_snowflake_can_opt_out(self, monkeypatch):
+        calls = _capture_adapter(monkeypatch, "olly.adapters.snowflake.SnowflakeAdapter")
+        connect_typed(
+            ConnectionConfig(
+                type="snowflake", account="a", use_information_schema_row_counts=False
+            )
+        )
+        assert calls[0]["use_information_schema_row_counts"] is False
+
+    def test_bigquery_defaults_to_metadata(self, monkeypatch):
+        calls = _capture_adapter(monkeypatch, "olly.adapters.bigquery.BigQueryAdapter")
+        connect_typed(ConnectionConfig(type="bigquery", project="p"))
+        assert calls[0]["use_information_schema_row_counts"] is True
+
+    def test_postgres_defaults_to_count_star(self, monkeypatch):
+        calls = _capture_adapter(monkeypatch, "olly.adapters.postgres.PostgresAdapter")
+        connect_typed(ConnectionConfig(type="postgres", url="postgresql://h/db"))
+        assert calls[0]["use_information_schema_row_counts"] is False
+
+    def test_postgres_can_opt_in(self, monkeypatch):
+        calls = _capture_adapter(monkeypatch, "olly.adapters.postgres.PostgresAdapter")
+        connect_typed(
+            ConnectionConfig(
+                type="postgres",
+                url="postgresql://h/db",
+                use_information_schema_row_counts=True,
+            )
+        )
+        assert calls[0]["use_information_schema_row_counts"] is True
 
 
 class TestConnectDispatches:

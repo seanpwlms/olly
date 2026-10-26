@@ -84,6 +84,8 @@ class PostgresStubConn:
 def make_postgres_adapter(
     rows: list[tuple] | None = None,
     raw_sql_results: list[PostgresStubResult] | None = None,
+    *,
+    use_information_schema_row_counts: bool = False,
 ):
     """Build a PostgresAdapter with a stub connection (no real DB).
 
@@ -96,6 +98,7 @@ def make_postgres_adapter(
     from olly.adapters.postgres import PostgresAdapter
 
     adapter = PostgresAdapter.__new__(PostgresAdapter)
+    adapter._use_information_schema_row_counts = use_information_schema_row_counts
     if raw_sql_results is not None:
         adapter._conn = PostgresStubConn(raw_sql_results)
     elif rows is not None:
@@ -136,13 +139,19 @@ class SnowflakeStubConn:
         return SnowflakeStubResult(rows)
 
 
-def make_snowflake_adapter(rows_per_call=None, *, use_account_usage=False):
+def make_snowflake_adapter(
+    rows_per_call=None,
+    *,
+    use_account_usage=False,
+    use_information_schema_row_counts=True,
+):
     """Build a SnowflakeAdapter with a stub connection (no real DB)."""
     from olly.adapters.snowflake import SnowflakeAdapter
 
     adapter = SnowflakeAdapter.__new__(SnowflakeAdapter)
     adapter._conn = SnowflakeStubConn(rows_per_call)
     adapter._use_account_usage = use_account_usage
+    adapter._use_information_schema_row_counts = use_information_schema_row_counts
     adapter._default_database = None
     return adapter
 
@@ -158,6 +167,7 @@ def make_snowflake_error_adapter():
     adapter = SnowflakeAdapter.__new__(SnowflakeAdapter)
     adapter._conn = _ErrorConn()
     adapter._use_account_usage = False
+    adapter._use_information_schema_row_counts = True
     adapter._default_database = None
     return adapter
 
