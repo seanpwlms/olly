@@ -131,44 +131,80 @@ class TestFetchHash:
 
 
 class TestFetchRowCounts:
-    def test_skips_views(self):
-        adapter = make_snowflake_adapter(rows_per_call=[[(10,)]])
-        infos = [
+    def _infos(self, *names, schema="DB.SCH", table_type="TABLE"):
+        return [
             TableInfo(
-                schema_name="DB.SCH", table_name="t1", table_type="TABLE", columns=[]
-            ),
-            TableInfo(
-                schema_name="DB.SCH", table_name="v1", table_type="VIEW", columns=[]
-            ),
+                schema_name=schema, table_name=n, table_type=table_type, columns=[]
+            )
+            for n in names
         ]
+
+    def test_reads_row_count_from_information_schema_by_default(self):
+        adapter = make_snowflake_adapter(
+            rows_per_call=[[("DB", "SCH", "t1", 42), ("DB", "SCH", "t2", 7)]]
+        )
+        records = adapter.fetch_row_counts(self._infos("t1", "t2"))
+        assert {r.table_name: r.row_count for r in records} == {"t1": 42, "t2": 7}
+        assert len(adapter._conn.queries) == 1
+        sql = adapter._conn.queries[0]
+        assert "ROW_COUNT" in sql
+        assert '"DB".INFORMATION_SCHEMA.TABLES' in sql
+        assert "COUNT(*)" not in sql
+
+    def test_one_query_per_database(self):
+        adapter = make_snowflake_adapter(
+            rows_per_call=[[("DB1", "SCH", "a", 1)], [("DB2", "SCH", "b", 2)]]
+        )
+        infos = self._infos("a", schema="DB1.SCH") + self._infos("b", schema="DB2.SCH")
         records = adapter.fetch_row_counts(infos)
-        assert len(records) == 1
-        assert records[0].table_name == "t1"
-        assert records[0].row_count == 10
+        assert [r.row_count for r in records] == [1, 2]
+        assert len(adapter._conn.queries) == 2
 
     def test_account_usage_mode(self):
         adapter = make_snowflake_adapter(
             rows_per_call=[[("DB", "SCH", "t1", 42)]],
             use_account_usage=True,
         )
-        infos = [
-            TableInfo(
-                schema_name="DB.SCH", table_name="t1", table_type="TABLE", columns=[]
-            ),
-        ]
-        records = adapter.fetch_row_counts(infos)
+        records = adapter.fetch_row_counts(self._infos("t1"))
         assert records[0].row_count == 42
-        assert "ACCOUNT_USAGE" in adapter._conn.queries[0]
+        assert "SNOWFLAKE.ACCOUNT_USAGE.TABLES" in adapter._conn.queries[0]
+        assert "DELETED IS NULL" in adapter._conn.queries[0]
+
+    def test_missing_or_null_row_count_is_skipped(self):
+        adapter = make_snowflake_adapter(
+            rows_per_call=[[("DB", "SCH", "ext", None)]]
+        )
+        records = adapter.fetch_row_counts(self._infos("ext", "gone"))
+        assert records == []
+
+    def test_skips_views(self):
+        adapter = make_snowflake_adapter(rows_per_call=[[("DB", "SCH", "t1", 10)]])
+        infos = self._infos("t1") + self._infos("v1", table_type="VIEW")
+        records = adapter.fetch_row_counts(infos)
+        assert len(records) == 1
+        assert records[0].table_name == "t1"
+        assert records[0].row_count == 10
+
+    def test_count_star_when_metadata_disabled(self):
+        adapter = make_snowflake_adapter(
+            rows_per_call=[[(10,)]], use_information_schema_row_counts=False
+        )
+        infos = self._infos("t1") + self._infos("v1", table_type="VIEW")
+        records = adapter.fetch_row_counts(infos)
+        assert len(records) == 1
+        assert records[0].row_count == 10
+        assert adapter._conn.queries == ['SELECT COUNT(*) FROM "DB"."SCH"."t1"']
 
     def test_error_raises(self):
         adapter = make_snowflake_error_adapter()
-        infos = [
-            TableInfo(
-                schema_name="DB.SCH", table_name="t1", table_type="TABLE", columns=[]
-            )
-        ]
-        with pytest.raises(RuntimeError, match="Failed to fetch row count"):
-            adapter.fetch_row_counts(infos)
+        with pytest.raises(RuntimeError, match="Failed to fetch row counts for database DB"):
+            adapter.fetch_row_counts(self._infos("t1"))
+
+    def test_count_star_error_raises(self):
+        adapter = make_snowflake_error_adapter()
+        adapter._use_information_schema_row_counts = False
+        with pytest.raises(RuntimeError, match="Failed to fetch row count for DB.SCH.t1"):
+            adapter.fetch_row_counts(self._infos("t1"))
 
 
 # ---------------------------------------------------------------------------

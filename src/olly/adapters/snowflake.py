@@ -29,6 +29,7 @@ class SnowflakeAdapter(BaseAdapter):
         *,
         database: str | None = None,
         use_account_usage: bool = False,
+        use_information_schema_row_counts: bool = True,
         **connect_kwargs: Any,
     ) -> None:
         """Initialize a Snowflake connection.
@@ -38,11 +39,15 @@ class SnowflakeAdapter(BaseAdapter):
             database: Optional default database name.
             use_account_usage: If True, use ``SNOWFLAKE.ACCOUNT_USAGE``
                 views instead of per-database ``INFORMATION_SCHEMA``.
+            use_information_schema_row_counts: If True, read row counts from
+                the ``ROW_COUNT`` catalog column instead of running
+                ``COUNT(*)`` queries.
             **connect_kwargs: Extra keyword arguments forwarded to
                 ``ibis.snowflake.connect()``.
         """
         self._default_database = database
         self._use_account_usage = use_account_usage
+        self._use_information_schema_row_counts = use_information_schema_row_counts
         self._conn = ibis.snowflake.connect(
             account=account,
             database=self._default_database,
@@ -65,35 +70,10 @@ class SnowflakeAdapter(BaseAdapter):
         Uses ``SNOWFLAKE.ACCOUNT_USAGE.TABLES`` when ``use_account_usage`` is
         enabled, otherwise each database's ``INFORMATION_SCHEMA.TABLES``.
         """
-        by_db: dict[str, list[TableInfo]] = {}
-        for ti in table_infos:
-            if ti.table_type == "VIEW":
-                continue
-            database, _ = _split_schema(ti.schema_name)
-            by_db.setdefault(database, []).append(ti)
-
         result: dict[tuple[str, str], datetime] = {}
-        for database, infos in by_db.items():
+        for database, infos in _non_views_by_database(table_infos).items():
             schema_list = list({_split_schema(ti.schema_name)[1] for ti in infos})
-            schema_filter = ", ".join(
-                f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schema_list
-            )
-            safe_db = database.replace("'", "''")
-            safe_db_ident = database.replace('"', '""')
-            if self._use_account_usage:
-                sql = (
-                    "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, LAST_ALTERED "
-                    "FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES "
-                    f"WHERE TABLE_CATALOG = '{safe_db}' "
-                    f"AND TABLE_SCHEMA IN ({schema_filter}) "
-                    "AND DELETED IS NULL"
-                )
-            else:
-                sql = (
-                    "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, LAST_ALTERED "
-                    f'FROM "{safe_db_ident}".INFORMATION_SCHEMA.TABLES '
-                    f"WHERE TABLE_SCHEMA IN ({schema_filter})"
-                )
+            sql = self._tables_query("LAST_ALTERED", database, schema_list)
             try:
                 rows = self._raw_sql(sql).fetchall()
             except Exception:
@@ -193,31 +173,38 @@ class SnowflakeAdapter(BaseAdapter):
                     on_progress(dotted, tbl)
         return tables
 
+    def _tables_query(self, column: str, database: str, schema_list: list[str]) -> str:
+        """Build a catalog ``TABLES`` query selecting the key columns plus *column*.
+
+        Reads ``SNOWFLAKE.ACCOUNT_USAGE.TABLES`` when ``use_account_usage`` is
+        enabled, otherwise the database's ``INFORMATION_SCHEMA.TABLES``.
+        """
+        schema_filter = ", ".join(
+            f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schema_list
+        )
+        select = f"SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, {column} "
+        if self._use_account_usage:
+            safe_db = database.replace("'", "''")
+            return (
+                select
+                + "FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES "
+                f"WHERE TABLE_CATALOG = '{safe_db}' "
+                f"AND TABLE_SCHEMA IN ({schema_filter}) "
+                "AND DELETED IS NULL"
+            )
+        safe_db_ident = database.replace('"', '""')
+        return (
+            select
+            + f'FROM "{safe_db_ident}".INFORMATION_SCHEMA.TABLES '
+            f"WHERE TABLE_SCHEMA IN ({schema_filter})"
+        )
+
     def _fetch_table_metadata(
         self, database: str, schema_list: list[str]
     ) -> dict[tuple[str, str, str], str]:
         """Query INFORMATION_SCHEMA.TABLES or ACCOUNT_USAGE.TABLES for table types."""
         metadata: dict[tuple[str, str, str], str] = {}
-        schema_filter = ", ".join(
-            f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schema_list
-        )
-
-        safe_db = database.replace("'", "''")
-        safe_db_ident = database.replace('"', '""')
-        if self._use_account_usage:
-            result = self._raw_sql(
-                "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
-                "FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES "
-                f"WHERE TABLE_CATALOG = '{safe_db}' "
-                f"AND TABLE_SCHEMA IN ({schema_filter}) "
-                "AND DELETED IS NULL"
-            )
-        else:
-            result = self._raw_sql(
-                "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, TABLE_TYPE "
-                f'FROM "{safe_db_ident}".INFORMATION_SCHEMA.TABLES '
-                f"WHERE TABLE_SCHEMA IN ({schema_filter})"
-            )
+        result = self._raw_sql(self._tables_query("TABLE_TYPE", database, schema_list))
 
         for row in result.fetchall():
             cat, sch, tbl, ttype = row[0], row[1], row[2], row[3]
@@ -277,9 +264,12 @@ class SnowflakeAdapter(BaseAdapter):
     ) -> list[VolumeRecord]:
         """Fetch row counts for the given tables, skipping views.
 
-        When ``use_account_usage`` is enabled, reads counts from
-        ``SNOWFLAKE.ACCOUNT_USAGE.TABLES``. Otherwise runs ``COUNT(*)``
-        queries per table.
+        When ``use_information_schema_row_counts`` is enabled (the default),
+        reads the catalog ``ROW_COUNT`` column with one query per database --
+        from ``SNOWFLAKE.ACCOUNT_USAGE.TABLES`` when ``use_account_usage`` is
+        enabled, otherwise ``INFORMATION_SCHEMA.TABLES``. Tables without a
+        catalog row count (e.g. external tables) are skipped. Otherwise runs
+        ``COUNT(*)`` queries per table.
 
         Args:
             table_infos: Tables to count rows for.
@@ -291,41 +281,35 @@ class SnowflakeAdapter(BaseAdapter):
         logger.debug("Fetching row counts for %d tables", len(table_infos))
         records: list[VolumeRecord] = []
 
-        if self._use_account_usage:
-            by_db: dict[str, list[TableInfo]] = {}
-            for ti in table_infos:
-                if ti.table_type == "VIEW":
-                    continue
-                database, _ = _split_schema(ti.schema_name)
-                by_db.setdefault(database, []).append(ti)
-
-            for database, infos in by_db.items():
+        if self._use_information_schema_row_counts:
+            for database, infos in _non_views_by_database(table_infos).items():
                 schema_list = list({_split_schema(ti.schema_name)[1] for ti in infos})
-                schema_filter = ", ".join(
-                    f"'{s.replace(chr(39), chr(39) * 2)}'" for s in schema_list
-                )
-                safe_db = database.replace("'", "''")
-                result = self._raw_sql(
-                    "SELECT TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME, ROW_COUNT "
-                    "FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES "
-                    f"WHERE TABLE_CATALOG = '{safe_db}' "
-                    f"AND TABLE_SCHEMA IN ({schema_filter}) "
-                    "AND DELETED IS NULL"
-                )
-                count_map: dict[tuple[str, str, str], int] = {}
-                for row in result.fetchall():
-                    count_map[(str(row[0]), str(row[1]), str(row[2]))] = (
-                        int(row[3]) if row[3] is not None else 0
-                    )
+                sql = self._tables_query("ROW_COUNT", database, schema_list)
+                try:
+                    rows = self._raw_sql(sql).fetchall()
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Failed to fetch row counts for database {database}"
+                    ) from exc
+                count_map = {
+                    (str(row[0]), str(row[1]), str(row[2])): row[3] for row in rows
+                }
 
                 for ti in infos:
                     db, sch = _split_schema(ti.schema_name)
-                    row_count = count_map.get((db, sch, ti.table_name), 0)
+                    row_count = count_map.get((db, sch, ti.table_name))
+                    if row_count is None:
+                        logger.warning(
+                            "Missing catalog row count for %s.%s, skipping",
+                            ti.schema_name,
+                            ti.table_name,
+                        )
+                        continue
                     records.append(
                         VolumeRecord(
                             schema_name=ti.schema_name,
                             table_name=ti.table_name,
-                            row_count=row_count,
+                            row_count=int(row_count),
                         )
                     )
                     if on_progress:
@@ -509,6 +493,17 @@ class SnowflakeAdapter(BaseAdapter):
             f"{self._quote_identifier(schema)}."
             f"{self._quote_identifier(table_name)}"
         )
+
+
+def _non_views_by_database(table_infos: list[TableInfo]) -> dict[str, list[TableInfo]]:
+    """Group non-view tables by their database for per-database catalog queries."""
+    by_db: dict[str, list[TableInfo]] = {}
+    for ti in table_infos:
+        if ti.table_type == "VIEW":
+            continue
+        database, _ = _split_schema(ti.schema_name)
+        by_db.setdefault(database, []).append(ti)
+    return by_db
 
 
 def _split_schema(schema_name: str) -> tuple[str, str]:
