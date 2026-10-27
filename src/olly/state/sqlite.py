@@ -61,7 +61,14 @@ CREATE TABLE IF NOT EXISTS findings (
     schema_name TEXT NOT NULL,
     table_name TEXT NOT NULL,
     description TEXT NOT NULL,
-    details TEXT NOT NULL
+    details TEXT NOT NULL,
+    fingerprint TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS check_runs (
+    created_at TEXT NOT NULL,
+    connection_name TEXT NOT NULL,
+    check_type TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS dbt_findings (
@@ -111,6 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_volume_snapshot_sid ON volume_snapshot(snapshot_i
 CREATE INDEX IF NOT EXISTS idx_cost_records_run_id ON cost_records(cost_run_id);
 CREATE INDEX IF NOT EXISTS idx_findings_created_at ON findings(created_at);
 CREATE INDEX IF NOT EXISTS idx_findings_connection ON findings(connection_name);
+CREATE INDEX IF NOT EXISTS idx_check_runs_scope ON check_runs(connection_name, check_type);
 CREATE INDEX IF NOT EXISTS idx_dbt_findings_created_at ON dbt_findings(created_at);
 CREATE INDEX IF NOT EXISTS idx_finding_dispositions_fid ON finding_dispositions(finding_id);
 CREATE INDEX IF NOT EXISTS idx_dbt_runs_created_at ON dbt_runs(created_at);
@@ -224,6 +232,16 @@ class StateDB(BaseStateStore):
                     "ALTER TABLE dbt_findings ADD COLUMN dbt_run_id INTEGER"
                 )
                 self.conn.commit()
+
+        finding_cols = {
+            row[1]
+            for row in self.conn.execute("PRAGMA table_info(findings)").fetchall()
+        }
+        if "fingerprint" not in finding_cols:
+            self.conn.execute(
+                "ALTER TABLE findings ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''"
+            )
+            self.conn.commit()
 
         if "dbt_node_timings" not in tables:
             self.conn.executescript(

@@ -75,6 +75,15 @@ FRESHNESS_METHODS = {"auto", "metadata", "column"}
 ``column``   -- always scan ``MAX(freshness_column)``.
 """
 
+FAIL_ON_MODES = {"warning", "error", "new", "none"}
+"""Valid values for ``fail_on`` -- which findings make ``olly check`` exit 1.
+
+``warning`` -- any finding (the default).
+``error``   -- any error-severity finding.
+``new``     -- any finding that is new or escalated since the last run.
+``none``    -- never; always exit 0 once checks complete.
+"""
+
 
 @dataclass
 class Settings:
@@ -89,6 +98,7 @@ class Settings:
     write_results: bool = True
     state_schema: str | None = None
     log_queries: bool = False
+    fail_on: str = "warning"
 
 
 @dataclass
@@ -154,6 +164,7 @@ class SlackConfig:
     webhook_url: str | None = None
     on_error: bool = True
     on_warning: bool = False
+    only_new: bool = True  # skip findings already reported by the previous run
 
 
 @dataclass
@@ -319,6 +330,7 @@ def load_config(path: Path | None = None) -> OllyConfig:
         write_results=settings_raw.get("write_results", True),
         state_schema=settings_raw.get("state_schema"),
         log_queries=settings_raw.get("log_queries", False),
+        fail_on=settings_raw.get("fail_on", "warning"),
     )
 
     integrity_raw = raw.get("integrity", {})
@@ -371,6 +383,7 @@ def load_config(path: Path | None = None) -> OllyConfig:
         webhook_url=slack_raw.get("webhook_url"),
         on_error=slack_raw.get("on_error", True),
         on_warning=slack_raw.get("on_warning", False),
+        only_new=slack_raw.get("only_new", True),
     )
 
     config = OllyConfig(

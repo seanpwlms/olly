@@ -170,6 +170,8 @@ def test_write_findings_json_structure(tmp_path):
         "id": None,
         "disposition": "not_started",
         "created_at": "",
+        "fingerprint": "",
+        "status": "new",
     }
 
 

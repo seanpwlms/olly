@@ -58,6 +58,8 @@ def run_checks(
     logger.info("Starting checks")
     findings: list[Finding] = []
     cost_records: list[CostRecord] = []
+    # (connection_name, check_type) pairs that actually ran, for lifecycle tracking
+    scopes: set[tuple[str, str]] = set()
 
     per_conn_types = {"schema", "volume", "freshness", "usage", "cost", "contracts"}
     run_per_connection = select_checks is None or bool(select_checks & per_conn_types)
@@ -88,6 +90,7 @@ def run_checks(
             for f in usage_findings:
                 f.connection_name = name
             findings.extend(usage_findings)
+            scopes.add((name, "usage"))
 
         with open_state(config, backend) as state_db:
             # Cost checks (independent of snapshots)
@@ -101,6 +104,7 @@ def run_checks(
                 for f in cost_findings:
                     f.connection_name = name
                 findings.extend(cost_findings)
+                scopes.add((name, "cost"))
                 cost_records.extend(conn_cost_records)
                 if conn_cost_records:
                     state_db.store_cost_data(conn_cost_records, connection_name=name)
@@ -129,6 +133,7 @@ def run_checks(
                 for f in schema_findings:
                     f.connection_name = name
                 findings.extend(schema_findings)
+                scopes.add((name, "schema"))
 
             if _selected("contracts") and config.contracts.module:
                 logger.debug("[%s] Running contract checks", name)
@@ -145,6 +150,7 @@ def run_checks(
                 for f in contract_findings:
                     f.connection_name = name
                 findings.extend(contract_findings)
+                scopes.add((name, "contracts"))
 
             # Volume checks
             if _selected("volume"):
@@ -173,6 +179,7 @@ def run_checks(
                 for f in volume_findings:
                     f.connection_name = name
                 findings.extend(volume_findings)
+                scopes.add((name, "volume"))
 
             # Freshness checks
             if _selected("freshness"):
@@ -193,6 +200,7 @@ def run_checks(
                 for f in freshness_findings:
                     f.connection_name = name
                 findings.extend(freshness_findings)
+                scopes.add((name, "freshness"))
 
     # Integrity checks (global, not per-connection)
     if _selected("integrity") and config.integrity.module:
@@ -202,6 +210,7 @@ def run_checks(
         config_path = config.config_path or Path("olly.toml")
         syncs = load_syncs(config.integrity.module, config_path)
         findings.extend(run_syncs(syncs, connections=config.connections))
+        scopes.add(("", "integrity"))
 
     # dbt checks (global)
     dbt_findings: list[DbtFinding] = []
@@ -212,12 +221,13 @@ def run_checks(
             on_progress("", "dbt")
         dbt_findings, dbt_run = _run_dbt_checks(config)
 
-    # Store all findings in the correct state store (warehouse or SQLite)
-    if findings or dbt_findings or dbt_run:
+    # Store all findings in the correct state store (warehouse or SQLite).
+    # A run with no findings is still recorded so earlier findings resolve.
+    if findings or scopes or dbt_findings or dbt_run:
         if on_progress:
             on_progress("", "saving")
         with open_state(config, last_backend) as state_db:
-            state_db.store_findings(findings)
+            state_db.record_check_run(findings, scopes)
             if dbt_run:
                 run_id = state_db.store_dbt_run(dbt_run)
                 state_db.store_dbt_findings(dbt_findings, dbt_run_id=run_id)

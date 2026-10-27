@@ -105,6 +105,7 @@ class WarehouseStateStore(BaseStateStore):
         "cost_runs",
         "cost_records",
         "findings",
+        "check_runs",
         "dbt_findings",
         "finding_dispositions",
         "dbt_runs",
@@ -221,13 +222,13 @@ class WarehouseStateStore(BaseStateStore):
         logger.debug("Created warehouse snapshot #%d", new_id)
         return new_id
 
-    def store_findings(self, findings: list) -> None:
+    def store_findings(self, findings: list, created_at: str | None = None) -> None:
         """Override to include auto-generated IDs for warehouse."""
         if not findings:
             return
         import json
         from datetime import datetime, timezone
-        now = datetime.now(timezone.utc).isoformat()
+        now = created_at or datetime.now(timezone.utc).isoformat()
         finding_id = self._generate_id()
         all_values = []
         for f in findings:
@@ -236,13 +237,14 @@ class WarehouseStateStore(BaseStateStore):
                 f"({finding_id}, '{self._esc(now)}', '{self._esc(f.connection_name)}', "
                 f"'{self._esc(f.check_type)}', '{self._esc(f.severity)}', "
                 f"'{self._esc(f.schema_name)}', '{self._esc(f.table_name)}', "
-                f"'{self._esc(f.description)}', '{details_json}')"
+                f"'{self._esc(f.description)}', '{details_json}', "
+                f"'{self._esc(f.fingerprint)}')"
             )
             finding_id += 1
         prefix = (
             f"INSERT INTO {self._table('findings')} "
             f"(id, created_at, connection_name, check_type, severity, schema_name, "
-            f"table_name, description, details) "
+            f"table_name, description, details, fingerprint) "
         )
         for i in range(0, len(all_values), self._BATCH_SIZE):
             batch = all_values[i : i + self._BATCH_SIZE]
@@ -347,7 +349,17 @@ class WarehouseStateStore(BaseStateStore):
             f"schema_name {t} NOT NULL, "
             f"table_name {t} NOT NULL, "
             f"description {t} NOT NULL, "
-            f"details {t} NOT NULL)"
+            f"details {t} NOT NULL, "
+            f"fingerprint {t})"
+        )
+        # Upgrades state created before finding fingerprints existed
+        self._exec(f"ALTER TABLE {findings} ADD COLUMN IF NOT EXISTS fingerprint {t}")
+        check_runs = self._table("check_runs")
+        self._exec(
+            f"CREATE TABLE IF NOT EXISTS {check_runs} ("
+            f"created_at {t} NOT NULL, "
+            f"connection_name {t} NOT NULL, "
+            f"check_type {t} NOT NULL)"
         )
         self._exec(
             f"CREATE TABLE IF NOT EXISTS {dbt_findings} ("
@@ -418,6 +430,10 @@ class WarehouseStateStore(BaseStateStore):
             self._exec(
                 f"CREATE INDEX IF NOT EXISTS idx_wss_findings_conn "
                 f"ON {findings}(connection_name)"
+            )
+            self._exec(
+                f"CREATE INDEX IF NOT EXISTS idx_wss_check_runs_scope "
+                f"ON {check_runs}(connection_name, check_type)"
             )
             self._exec(
                 f"CREATE INDEX IF NOT EXISTS idx_wss_dbt_findings_created "

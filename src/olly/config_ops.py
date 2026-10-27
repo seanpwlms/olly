@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from olly.config import (
+    FAIL_ON_MODES,
     FRESHNESS_METHODS,
     NamedConnection,
     Override,
@@ -261,6 +262,12 @@ def validate_config(config: OllyConfig) -> list[str]:
         warnings.append(
             f"settings.freshness_method '{config.settings.freshness_method}' is "
             f"invalid (expected one of {sorted(FRESHNESS_METHODS)})."
+        )
+
+    if config.settings.fail_on not in FAIL_ON_MODES:
+        warnings.append(
+            f"settings.fail_on '{config.settings.fail_on}' is invalid "
+            f"(expected one of {sorted(FAIL_ON_MODES)})."
         )
 
     if config.integrity.module is not None and not config.integrity.module.strip():

@@ -6,6 +6,7 @@ import urllib.request
 from urllib.error import URLError
 
 from olly.config import SlackConfig
+from olly.lifecycle import needs_attention
 from olly.models import DbtFinding, Finding
 
 logger = logging.getLogger(__name__)
@@ -90,7 +91,10 @@ def send_slack_alert(
     """Post qualifying findings to the configured Slack webhook.
 
     Filters findings by ``config.on_error`` / ``config.on_warning`` before
-    sending. No-op when unconfigured or when no qualifying findings exist.
+    sending, and with ``config.only_new`` drops findings that were already
+    reported by the previous run. dbt findings are always eligible, since
+    each dbt run is a fresh event. No-op when unconfigured or when no
+    qualifying findings exist.
     Errors from the HTTP call are logged as warnings and never re-raised.
 
     Args:
@@ -103,8 +107,9 @@ def send_slack_alert(
 
     qualifying = [
         f for f in findings
-        if (f.severity == "error" and config.on_error)
-        or (f.severity == "warning" and config.on_warning)
+        if ((f.severity == "error" and config.on_error)
+            or (f.severity == "warning" and config.on_warning))
+        and (not config.only_new or needs_attention(f))
     ]
     qualifying_dbt = [
         f for f in dbt_findings

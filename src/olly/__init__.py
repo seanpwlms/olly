@@ -45,6 +45,7 @@ def check(
     write_results: bool | None = None,
     connection: str | None = None,
     select: str | None = None,
+    fail_on: str | None = None,
 ) -> None:
     """Run data quality checks against the latest snapshot.
 
@@ -60,6 +61,9 @@ def check(
         select: Comma-separated list of check types to run (e.g. ``schema,volume``).
             Valid types: schema, volume, freshness, usage, cost, contracts,
             integrity, dbt. Runs all checks when omitted.
+        fail_on: Which findings cause a non-zero exit: ``warning`` (any
+            finding), ``error``, ``new`` (new or escalated since the last
+            run), or ``none``. Defaults to ``settings.fail_on``.
     """
     from olly.cli.check import run_check
 
@@ -69,6 +73,7 @@ def check(
         write_results=write_results,
         connection_name=connection,
         select=select,
+        fail_on=fail_on,
     )
 
 
