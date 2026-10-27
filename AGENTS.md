@@ -41,6 +41,7 @@ CLI is a thin wrapper (`src/olly/__init__.py` → `src/olly/cli/`). All logic li
   - `warehouse.py` — `WarehouseStateStore(BaseStateStore)`: stores state in warehouse tables (enabled via `settings.state_schema`)
 - `checker.py` — core check orchestration (`run_checks`); coordinates all check modules per connection, then runs global checks (integrity, dbt)
 - `models.py` — shared dataclasses (`TableInfo`, `ColumnInfo`, `VolumeRecord`, `UsageRecord`, `CostRecord`, `Finding`, `Sync`, `DbtFinding`, `WindowSpec`) and enums (`IntegrityMethod`, `WindowOp`, `VolumeMethod`, `Disposition`)
+- `lifecycle.py` — finding fingerprints and new/escalated/ongoing classification (`fingerprint`, `apply_lifecycle`, `needs_attention`)
 - `_import.py` — shared helpers for importing user-specified Python modules by file path or dotted name
 - `contracts.py` — `TableContract` declarative API for schema assertions
 - `plan.py` — config introspection / plan resolution (`resolve_plan`, `format_plan`)
@@ -146,8 +147,14 @@ The `type` field in `[connection]` drives adapter selection: `duckdb`, `postgres
 - `connection_name: str` — which named connection produced this finding
 - `disposition: str` — workflow status (`"not_started"`, `"no_action"`, `"in_progress"`, `"completed"`)
 - `id: int | None`, `created_at: str`
+- `fingerprint: str` — stable identity of the issue across runs (`lifecycle.fingerprint`)
+- `status: str` — `FindingStatus`: `"new"`, `"escalated"`, or `"ongoing"` relative to the previous run
 
 **`Disposition`** enum: `NOT_STARTED`, `NO_ACTION`, `IN_PROGRESS`, `COMPLETED`. Set via the dashboard UI or `state.set_disposition()`. Dispositions are tracked in a separate history table, so each status change is an auditable event.
+
+**Lifecycle** (`lifecycle.py`, `state.record_check_run()`): `run_checks()` collects the `(connection_name, check_type)` scopes that actually ran and passes them with the findings to `record_check_run`. That compares fingerprints against the most recent `check_runs` entry for each scope, sets `status`, stores the findings, and copies dispositions onto ongoing findings (as `created_by="olly"` events; not for escalated ones). Fingerprints combine connection, check type, schema, table, and the per-check `IDENTITY_KEYS` from `details`. When adding a check type whose findings can repeat per table (e.g. per column), add its distinguishing `details` keys to `IDENTITY_KEYS`, and make sure the scope name added in `run_checks` equals the findings' `check_type`.
+
+`olly check` exit code follows `settings.fail_on` / `--fail-on` (`warning`, `error`, `new`, `none`; see `cli/check.py:should_fail`). Slack skips ongoing findings unless `[slack] only_new = false`.
 
 ## Ibis adapter gotchas
 
@@ -255,13 +262,13 @@ Override fields:
 
 ### Other config sections
 
-- `[settings]` — global defaults: `history_depth`, `volume_zscore_threshold`, `volume_method`, `freshness_method`, `freshness_threshold_hours`, `min_history_for_anomaly`, `write_results`, `state_schema`
+- `[settings]` — global defaults: `history_depth`, `volume_zscore_threshold`, `volume_method`, `freshness_method`, `freshness_threshold_hours`, `min_history_for_anomaly`, `write_results`, `state_schema`, `fail_on`
 - `[integrity]` — `module` pointing to a Python file exporting a `syncs` list of `Sync` dataclasses
 - `[contracts]` — `module` pointing to a Python file defining `TableContract` subclasses
 - `[dbt]` — `run_results_path`, `include_skipped`
 - `[usage]` — `enabled`, `lookback_days`, `unused_threshold_days`, `bigquery_region`, `rollup_schemas` (collapse fully-inactive schemas into one finding, default true), `schema_unused_threshold_pct` (also flag schemas with ≥ this % inactive tables, default 100)
 - `[cost]` — `enabled`, `lookback_days`, `bigquery_region`, `price_per_tb_usd`, `spike_threshold`
-- `[slack]` — `webhook_url`, `on_error`, `on_warning`
+- `[slack]` — `webhook_url`, `on_error`, `on_warning`, `only_new`
 
 See `config.py` for authoritative field names, types, and defaults. Both `[integrity]` and `[contracts]` use `_import.py` to resolve the module reference.
 

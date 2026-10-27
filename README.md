@@ -74,6 +74,8 @@ olly check             Run data quality checks
   --write-results      Persist findings to ~/.olly/findings.json (default: true)
   --no-write-results   Disable writing findings to disk
   --connection NAME    Only check this connection
+  --select TYPES       Comma-separated check types to run (e.g. schema,volume)
+  --fail-on MODE       Exit 1 on: warning (any finding, default), error, new, none
 olly plan              Show resolved config for each table
   --connection NAME    Only explain this connection
 olly unused            Show unused and stale tables
@@ -172,6 +174,7 @@ history_depth = 30                  # snapshots to keep for trend analysis
 min_history_for_anomaly = 5         # minimum snapshots before volume checks run
 write_results = true                # persist findings to ~/.olly/findings.json
 state_schema = "olly_state"         # optional: store state in warehouse instead of local SQLite
+fail_on = "warning"                 # exit 1 on: "warning", "error", "new", or "none"
 ```
 
 EWMA (Exponentially Weighted Moving Average) is the default volume method. 
@@ -330,9 +333,30 @@ Send findings to a Slack channel via an [incoming webhook](https://api.slack.com
 webhook_url = "https://hooks.slack.com/services/T00/B00/xxxx"
 on_error = true       # send on errors (default: true)
 on_warning = false    # send on warnings (default: false)
+only_new = true       # skip findings already reported last run (default: true)
 ```
 
-When `olly check` produces qualifying findings, a summary is posted to the configured webhook.
+When `olly check` produces qualifying findings, a summary is posted to the configured webhook. With `only_new`, an issue is posted once when it first appears and again only if it escalates from warning to error.
+
+## Finding lifecycle
+
+Each finding has a `fingerprint` identifying the underlying issue (connection, check, table, and e.g. the column or integrity pipeline). Measured values such as row counts or z-scores are not part of it, so a table that stays stale keeps the same fingerprint run after run.
+
+`olly check` compares each finding against the previous run of the same check and assigns a `status`:
+
+| Status | Meaning |
+|---|---|
+| `new` | Not present in the previous run |
+| `escalated` | Present last run as a warning, now an error |
+| `ongoing` | Present last run at the same or higher severity |
+
+An issue that disappears from a run is resolved; if it comes back later it is `new` again. Runs restricted with `--select` or `--connection` only affect the checks they ran.
+
+Ongoing findings inherit the previous finding's disposition (e.g. "no action" set in the dashboard), recorded as a disposition event by `olly`. Escalated findings start over at "not started" so they get looked at again.
+
+Use `--fail-on new` (or `fail_on = "new"`) in CI so a known, accepted issue doesn't fail every run.
+
+If you store state in the warehouse (`state_schema`), re-run `olly create-state` after upgrading to add the `fingerprint` column and `check_runs` table.
 
 ## Python API
 

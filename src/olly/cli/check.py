@@ -19,14 +19,15 @@ from rich.table import Table
 
 from olly.adapter import connect_typed
 from olly.checker import run_checks
-from olly.config import load_config
+from olly.config import FAIL_ON_MODES, load_config
 from olly.config_ops import (
     resolve_connections,
     validate_config,
 )
 from olly.logging import setup_logging, setup_query_logging
 from olly.checks.cost import summarize_costs
-from olly.models import CostRecord, DbtFinding, Finding
+from olly.lifecycle import needs_attention
+from olly.models import CostRecord, DbtFinding, Finding, FindingStatus
 from olly.results import write_findings_json
 from olly.slack import send_slack_alert
 from olly.state import open_state
@@ -44,6 +45,12 @@ PER_CONNECTION_CHECK_TYPES = frozenset(
 )
 GLOBAL_CHECK_TYPES = frozenset({"integrity", "dbt"})
 
+_STATUS_STYLES = {
+    FindingStatus.NEW.value: "[bold cyan]new[/bold cyan]",
+    FindingStatus.ESCALATED.value: "[bold magenta]escalated[/bold magenta]",
+    FindingStatus.ONGOING.value: "[dim]ongoing[/dim]",
+}
+
 
 def _build_check_table(
     findings: list[Finding], title: str,
@@ -51,6 +58,7 @@ def _build_check_table(
     """Build a Rich table for findings that share a single check type."""
     table = Table(title=title, show_lines=False, pad_edge=True, padding=(0, 1))
     table.add_column("Severity", width=8)
+    table.add_column("Status", width=9)
     table.add_column("Table", style="blue")
     table.add_column("Description")
 
@@ -58,10 +66,31 @@ def _build_check_table(
         severity_style = "red bold" if f.severity == "error" else "yellow"
         table.add_row(
             f"[{severity_style}]{f.severity}[/{severity_style}]",
+            _STATUS_STYLES.get(f.status, f.status),
             f"{f.schema_name}.{f.table_name}",
             f.description,
         )
     return table
+
+
+def should_fail(
+    findings: list[Finding], dbt_issues: list[DbtFinding], fail_on: str,
+) -> bool:
+    """Decide whether ``olly check`` should exit non-zero.
+
+    Args:
+        findings: Warehouse findings from the run.
+        dbt_issues: Non-pass dbt findings from the run. Each dbt run is a
+            fresh event, so these count as new under ``fail_on="new"``.
+        fail_on: One of :data:`olly.config.FAIL_ON_MODES`.
+    """
+    if fail_on == "none":
+        return False
+    if fail_on == "error":
+        return any(f.severity == "error" for f in [*findings, *dbt_issues])
+    if fail_on == "new":
+        return bool(dbt_issues) or any(needs_attention(f) for f in findings)
+    return bool(findings or dbt_issues)
 
 
 def _print_findings_group(
@@ -192,12 +221,13 @@ def run_check(
     write_results: bool | None = None,
     connection_name: str | None = None,
     select: str | None = None,
+    fail_on: str | None = None,
 ) -> None:
     """CLI entry point for ``olly check``.
 
     Loads config, runs all checks, optionally writes results to disk, and
-    prints output as a table or JSON. Exits with code 1 if any findings
-    are present.
+    prints output as a table or JSON. Exits with code 1 when findings
+    match the ``fail_on`` policy.
 
     Args:
         output_json: If True, print findings as JSON instead of a table.
@@ -206,10 +236,19 @@ def run_check(
             the config value is used.
         connection_name: Optional connection name to check.
         select: Comma-separated list of check types to run.
+        fail_on: Override for ``settings.fail_on``. When None, the config
+            value is used.
     """
     setup_logging(verbose)
     select_checks = _parse_select(select)
     config = load_config()
+    fail_on = fail_on or config.settings.fail_on
+    if fail_on not in FAIL_ON_MODES:
+        console.print(
+            f"[red]Invalid fail_on '{fail_on}'.[/red] "
+            f"Valid values: {', '.join(sorted(FAIL_ON_MODES))}"
+        )
+        raise SystemExit(2)
     if config.settings.log_queries:
         setup_query_logging()
     warnings = validate_config(config)
@@ -320,7 +359,11 @@ def run_check(
             error_count = sum(1 for f in findings if f.severity == "error")
             warn_count = sum(1 for f in findings if f.severity == "warning")
             if findings:
-                parts.append(f"{error_count} error(s), {warn_count} warning(s)")
+                new_count = sum(1 for f in findings if needs_attention(f))
+                parts.append(
+                    f"{error_count} error(s), {warn_count} warning(s) "
+                    f"({new_count} new or escalated)"
+                )
             if dbt_issues:
                 dbt_errors = sum(1 for f in dbt_issues if f.severity == "error")
                 dbt_warns = sum(1 for f in dbt_issues if f.severity == "warning")
@@ -328,5 +371,5 @@ def run_check(
             if parts:
                 console.print("\n" + " — ".join(parts))
 
-    if findings or dbt_issues:
+    if should_fail(findings, dbt_issues, fail_on):
         sys.exit(1)

@@ -88,6 +88,7 @@ def check_volume(
                         f"({vol.row_count:,} rows, {score_phrase})"
                     ),
                     details={
+                        "direction": direction,
                         "current_count": vol.row_count,
                         "z_score": details_score,
                         "threshold": threshold,

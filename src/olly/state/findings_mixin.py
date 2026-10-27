@@ -7,7 +7,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from olly.models import Disposition, Finding
+from olly.lifecycle import PriorFinding, apply_lifecycle
+from olly.models import Disposition, Finding, FindingStatus
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,12 @@ class FindingsStateMixin:
         )
         return row[0] if row and row[0] else None
 
-    def store_findings(self, findings: list[Finding]) -> None:
+    def store_findings(
+        self, findings: list[Finding], created_at: str | None = None
+    ) -> None:
         if not findings:
             return
-        now = datetime.now(timezone.utc).isoformat()
+        now = created_at or datetime.now(timezone.utc).isoformat()
         rows = [
             (
                 now,
@@ -61,20 +64,121 @@ class FindingsStateMixin:
                 f.table_name,
                 f.description,
                 json.dumps(f.details),
+                f.fingerprint,
             )
             for f in findings
         ]
         self._execute_many(
             f"INSERT INTO {self._table('findings')} "  # noqa: S608
             "(created_at, connection_name, check_type, severity, schema_name, "
-            "table_name, description, details) "
+            "table_name, description, details, fingerprint) "
             "VALUES (:created_at, :connection_name, :check_type, :severity, "
-            ":schema_name, :table_name, :description, :details)",
+            ":schema_name, :table_name, :description, :details, :fingerprint)",
             ["created_at", "connection_name", "check_type", "severity",
-             "schema_name", "table_name", "description", "details"],
+             "schema_name", "table_name", "description", "details", "fingerprint"],
             rows,
         )
         logger.debug("Stored %d findings", len(findings))
+
+    # --- Lifecycle ---
+
+    def record_check_run(
+        self, findings: list[Finding], scopes: set[tuple[str, str]]
+    ) -> None:
+        """Store a check run's findings, classifying each against the last run.
+
+        Sets ``fingerprint``, ``status``, and ``id`` on each finding in
+        place. Ongoing findings inherit their predecessor's disposition.
+
+        Args:
+            findings: Findings produced by this run.
+            scopes: ``(connection_name, check_type)`` pairs that actually
+                ran. A finding is compared only against the previous run of
+                its own scope, so partial runs (``--select``,
+                ``--connection``) don't make other findings look resolved.
+        """
+        now = datetime.now(timezone.utc).isoformat()
+        previous = self._previous_findings(scopes)
+        apply_lifecycle(findings, previous)
+        self.store_findings(findings, created_at=now)
+        if findings:
+            self._assign_ids(findings, now)
+            self._carry_over_dispositions(findings, previous)
+        self._execute_many(
+            f"INSERT INTO {self._table('check_runs')} "  # noqa: S608
+            "(created_at, connection_name, check_type) "
+            "VALUES (:created_at, :connection_name, :check_type)",
+            ["created_at", "connection_name", "check_type"],
+            [(now, conn, check) for conn, check in sorted(scopes)],
+        )
+
+    def _previous_findings(
+        self, scopes: set[tuple[str, str]]
+    ) -> dict[str, PriorFinding]:
+        """Return findings from the last run of each scope, keyed by fingerprint."""
+        if not scopes:
+            return {}
+        rows = self._query(
+            "SELECT connection_name, check_type, MAX(created_at) "  # noqa: S608
+            f"FROM {self._table('check_runs')} "
+            "GROUP BY connection_name, check_type"
+        )
+        last_run = {(r[0], r[1]): r[2] for r in rows if (r[0], r[1]) in scopes}
+        if not last_run:
+            return {}
+
+        times = sorted(set(last_run.values()))
+        params = {f"t{i}": t for i, t in enumerate(times)}
+        placeholders = ", ".join(f":{name}" for name in params)
+        rows = self._query(
+            "SELECT id, connection_name, check_type, severity, fingerprint, "  # noqa: S608
+            f"created_at FROM {self._table('findings')} "
+            f"WHERE created_at IN ({placeholders})",
+            params,
+        )
+        return {
+            fp: PriorFinding(id=fid, severity=severity)
+            for fid, conn, check, severity, fp, created_at in rows
+            if fp and last_run.get((conn, check)) == created_at
+        }
+
+    def _assign_ids(self, findings: list[Finding], created_at: str) -> None:
+        """Copy stored row IDs back onto the in-memory findings."""
+        rows = self._query(
+            f"SELECT id, fingerprint FROM {self._table('findings')} "  # noqa: S608
+            "WHERE created_at = :created_at",
+            {"created_at": created_at},
+        )
+        ids = {fp: fid for fid, fp in rows}
+        for f in findings:
+            f.id = ids.get(f.fingerprint)
+
+    def _carry_over_dispositions(
+        self, findings: list[Finding], previous: dict[str, PriorFinding]
+    ) -> None:
+        """Copy dispositions from last run onto ongoing findings.
+
+        Escalated findings start fresh so they get triaged again.
+        """
+        ongoing = [
+            f for f in findings
+            if f.status == FindingStatus.ONGOING.value and f.id is not None
+        ]
+        if not ongoing:
+            return
+        prior_ids = [previous[f.fingerprint].id for f in ongoing]
+        dispositions = self.get_current_dispositions(prior_ids)
+        for f, prior_id in zip(ongoing, prior_ids):
+            disposition = dispositions.get(prior_id)
+            if disposition is None or disposition == Disposition.NOT_STARTED.value:
+                continue
+            assert f.id is not None
+            self.set_disposition(
+                f.id, disposition,
+                comment=f"Carried over from finding #{prior_id}",
+                created_by="olly",
+            )
+            f.disposition = disposition
 
     def get_latest_findings(self, connection_name: str | None = None) -> list[Finding]:
         """Return findings from the most recent check run only."""

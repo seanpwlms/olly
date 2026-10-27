@@ -23,6 +23,14 @@ class Disposition(str, Enum):
     COMPLETED = "completed"
 
 
+class FindingStatus(str, Enum):
+    """Lifecycle status of a finding relative to the previous check run."""
+
+    NEW = "new"
+    ESCALATED = "escalated"  # seen last run at a lower severity
+    ONGOING = "ongoing"  # seen last run at the same or higher severity
+
+
 class VolumeMethod(str, Enum):
     """Method used for volume anomaly detection."""
 
@@ -127,6 +135,8 @@ class Finding:
     id: int | None = None
     disposition: str = "not_started"
     created_at: str = ""
+    fingerprint: str = ""  # stable identity across runs; see olly.lifecycle
+    status: str = "new"  # FindingStatus value, set when the run is recorded
 
 
 @dataclass
